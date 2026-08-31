@@ -43,8 +43,9 @@ private val log: Logger = LoggerFactory.getLogger(NetworkClient::class.java)
  * `ActorSnapshot`, or an `AliveSnapshot`, tagged with a `type` field. These
  * are the same classes the server broadcasts with, imported directly from
  * GameTools rather than re-declared here, so the wire shape can't drift out
- * of sync with the library. Each entry is immediately reduced to its drawable
- * core (see [drawableCore]) since this client renders nothing beyond that.
+ * of sync with the library. [getWorldState] hands back the list as decoded,
+ * so a caller that wants the extra state (an `AliveSnapshot`'s health, say)
+ * can pattern-match it; callers that only draw use [drawableCore].
  *
  * @property serverHost address or hostname of the server to connect to
  * @property playerName the name this client hands the server during the
@@ -58,7 +59,7 @@ class NetworkClient(
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Latest parsed world-state snapshot. Written by the listener thread, read by anyone. */
-    private val worldState = AtomicReference<List<VisibleObjectSnapshot>>(emptyList())
+    private val worldState = AtomicReference<List<DrawableSnapshot>>(emptyList())
 
     // Bound to MultiConnectionUDPServer.COMMON_SEND_PORT; used only during
     // the handshake to send "Iam ..." and receive the "TXRXON ..." reply.
@@ -87,8 +88,12 @@ class NetworkClient(
     fun start(): Result<Unit> =
         handshake().flatMap { ports -> openDedicatedChannel(ports) }
 
-    /** Returns the most recently received world state. Safe to call from any thread. */
-    fun getWorldState(): List<VisibleObjectSnapshot> = worldState.get()
+    /**
+     * The most recently received world state, as decoded off the wire (each
+     * entry a plain [VisibleObjectSnapshot], an `ActorSnapshot`, or an
+     * `AliveSnapshot`). Safe to call from any thread.
+     */
+    fun getWorldState(): List<DrawableSnapshot> = worldState.get()
 
     /** Asks the server to move actor [index] toward ([x], [y]). */
     fun setDestination(index: Int, x: Double, y: Double): Result<Unit> =
@@ -239,7 +244,7 @@ class NetworkClient(
         when (verb) {
             ProtocolParsing.STATE_VERB ->
                 runCatching { json.decodeFromString<List<DrawableSnapshot>>(payload) }
-                    .onSuccess { snapshots -> worldState.set(snapshots.map { it.drawableCore() }) }
+                    .onSuccess { snapshots -> worldState.set(snapshots) }
                     .onFailure { cause -> log.warn("Failed to parse STATE payload: {}", cause.message) }
 
             ProtocolParsing.PONG_VERB -> log.debug("Received PONG")

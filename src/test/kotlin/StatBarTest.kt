@@ -78,4 +78,28 @@ class StatBarTest {
 
         assertEquals(positioned[1].width, positioned[2].width, 1e-9)
     }
+
+    @Test
+    fun `an invisible bar contributes no layers to draw`() {
+        val bar = StatBar(position = square(0.0, 0.0, 1.0, 1.0), value = 50.0, maxValue = 100.0, visible = false)
+
+        val positioned = Scene().apply { add(bar) }.flatten(W, H)
+
+        assertEquals(1, positioned.size) // the bar element itself, no track / fill
+        assertSame(bar, positioned[0].element)
+    }
+
+    @Test
+    fun `visibility is re-read every frame`() {
+        var show = false
+        val bar = StatBar(
+            position = square(0.0, 0.0, 1.0, 1.0),
+            value = { 50.0 }, maxValue = { 100.0 }, visible = { show }
+        )
+        val scene = Scene().apply { add(bar) }
+
+        assertEquals(1, scene.flatten(W, H).size)
+        show = true
+        assertEquals(3, scene.flatten(W, H).size)
+    }
 }

@@ -1,7 +1,11 @@
 package com.spartanlabs
 
 import com.spartanlabs.audio.SoundPlayer
+import com.spartanlabs.gaming.gameobjects.AliveSnapshot
+import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
+import com.spartanlabs.gaming.gameobjects.StatGroupSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
+import com.spartanlabs.geometry.Square
 import com.spartanlabs.graphics.Window
 import com.spartanlabs.graphics.ui.Color
 import com.spartanlabs.graphics.ui.GameView
@@ -10,9 +14,11 @@ import com.spartanlabs.graphics.ui.Panel
 import com.spartanlabs.graphics.ui.Portrait
 import com.spartanlabs.graphics.ui.Scene
 import com.spartanlabs.graphics.ui.Stage
+import com.spartanlabs.graphics.ui.StatBar
 import com.spartanlabs.graphics.ui.Viewport
 import com.spartanlabs.graphics.ui.screenRect
 import com.spartanlabs.networking.NetworkClient
+import com.spartanlabs.networking.drawableCore
 import org.lwjgl.glfw.GLFW.glfwGetTime
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -65,7 +71,8 @@ fun main() {
             }
 
         val viewport = Viewport(gameView(client, window, sounds)) // fills the window by default
-        window.loadStage(buildStage(viewport, client))
+        val (windowWidth, windowHeight) = window.sizePx()
+        window.loadStage(buildStage(viewport, client, windowWidth, windowHeight))
         window.showScene(MENU_SCENE)
             .onFailure { cause -> log.warn("Could not show the menu scene: {}", cause.message) }
 
@@ -117,14 +124,24 @@ private fun gameView(client: NetworkClient, window: Window, sounds: SoundPlayer)
  * fraction of that panel's box. `(0, 0)` is the frame's top-left, `(1, 1)`
  * its bottom-right.
  */
-private fun buildStage(viewport: Viewport, client: NetworkClient): Stage {
-    // The visible object the player last left-clicked, resolved live against
-    // the newest world state every frame (null once nothing's picked or the
-    // actor is gone). Shared by the portrait and the info labels.
-    val selected: () -> VisibleObjectSnapshot? = {
+private fun buildStage(
+    viewport: Viewport,
+    client: NetworkClient,
+    windowWidth: Int,
+    windowHeight: Int
+): Stage {
+    // The object the player last left-clicked, resolved live against the newest
+    // world state every frame (null once nothing's picked or the object is
+    // gone). `selected` is its drawable core, shared by the portrait and the
+    // info labels; `selectedHealth` is non-null only when that object is an
+    // Alive, which is what gates the health bar.
+    val selectedRaw: () -> DrawableSnapshot? = {
         viewport.selectedActor?.let { client.getWorldState().getOrNull(it) }
     }
-    val info = bottomInfoPanel(selected) { viewport.selectedActor }
+    val selected: () -> VisibleObjectSnapshot? = { selectedRaw()?.drawableCore() }
+    val selectedHealth: () -> StatGroupSnapshot? = { (selectedRaw() as? AliveSnapshot)?.health }
+
+    val info = bottomInfoPanel(selected, selectedHealth, windowWidth, windowHeight) { viewport.selectedActor }
 
     val menu = Scene().apply {
         add(viewport)
@@ -174,22 +191,56 @@ private fun buildStage(viewport: Viewport, client: NetworkClient): Stage {
     }
 }
 
+/** The bottom-of-screen inspector panel's box, as a fraction of the window. */
+private val INFO_PANEL_RECT = screenRect(x = 0.25, y = 0.85, width = 0.50, height = 0.15)
+
+// The "healthbar" spans the info panel to the right of the portrait. Its width
+// is a fixed fraction of the panel; its height fraction is derived from the
+// window size (see healthBarRect) so the *rendered* bar stays about this
+// aspect - height ~= 0.2 * width - whatever the window's shape.
+private const val HEALTH_BAR_X = 0.17
+private const val HEALTH_BAR_WIDTH = 0.81
+private const val HEALTH_BAR_HEIGHT_OVER_WIDTH = 0.2
+
+/**
+ * The "healthbar"'s box within [panel], picked so its rendered pixel height is
+ * about [HEALTH_BAR_HEIGHT_OVER_WIDTH] of its rendered pixel width at the given
+ * window size, then centred vertically in the panel.
+ */
+private fun healthBarRect(panel: Square, windowWidth: Int, windowHeight: Int): Square {
+    val renderedWidthPx = HEALTH_BAR_WIDTH * panel.dimensions.width * windowWidth
+    val renderedHeightPx = HEALTH_BAR_HEIGHT_OVER_WIDTH * renderedWidthPx
+    val heightFraction = (renderedHeightPx / (panel.dimensions.height * windowHeight)).coerceIn(0.0, 1.0)
+    return screenRect(HEALTH_BAR_X, (1.0 - heightFraction) / 2.0, HEALTH_BAR_WIDTH, heightFraction)
+}
+
 /**
  * The bottom-of-screen inspector: a [Portrait] of the selected object on the
- * left, and [Label]s reading out its index, position, size and facing on the
- * right. Every child re-reads [selected] / [selectedIndex] each frame, so the
- * panel updates the instant a new object is clicked and tracks it as it moves.
+ * left, a [StatBar] "healthbar" behind the read-out (shown only while the
+ * selection has a health stat), and [Label]s reading out its index, position,
+ * size and facing on top. Every child re-reads [selected] / [selectedIndex] /
+ * [health] each frame, so the panel updates the instant a new object is
+ * clicked and tracks it as it moves.
  */
 private fun bottomInfoPanel(
     selected: () -> VisibleObjectSnapshot?,
+    health: () -> StatGroupSnapshot?,
+    windowWidth: Int,
+    windowHeight: Int,
     selectedIndex: () -> Int?
 ): Panel = Panel(
-    position = screenRect(x = 0.25, y = 0.85, width = 0.50, height = 0.15),
+    position = INFO_PANEL_RECT,
     color = Color(15, 18, 30, 235),
     children = listOf(
         Portrait(
             subject = selected,
             position = screenRect(x = 0.02, y = 0.10, width = 0.13, height = 0.80)
+        ),
+        StatBar(
+            position = healthBarRect(INFO_PANEL_RECT, windowWidth, windowHeight),
+            value = { health()?.value ?: 0.0 },
+            maxValue = { health()?.maxValue ?: 1.0 },
+            visible = { health() != null }
         ),
         infoLabel(row = 0) { selectedIndex()?.let { "Actor #$it" } ?: "Nothing selected" },
         infoLabel(row = 1) { selected()?.let { "Pos   ${fmt(it.gameObject.location.x)}, ${fmt(it.gameObject.location.y)}" } ?: "" },

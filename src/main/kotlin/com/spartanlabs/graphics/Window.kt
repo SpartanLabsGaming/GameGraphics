@@ -1,5 +1,6 @@
 package com.spartanlabs.graphics
 
+import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
 import com.spartanlabs.gaming.networking.MouseAction
 import com.spartanlabs.gaming.networking.MouseActionType
@@ -173,6 +174,13 @@ class Window(
     /** True once the user has requested the window close (e.g. pressed Escape). */
     fun shouldClose(): Boolean = glfwWindowShouldClose(handle)
 
+    /**
+     * The window's current `(width, height)` in pixels. Detected from the
+     * monitor in [open] and kept current on resize, so it is only meaningful
+     * once [open] has succeeded.
+     */
+    fun sizePx(): Pair<Int, Int> = width to height
+
     /** Pumps the GLFW event queue. Call once per frame. */
     fun pollEvents() = glfwPollEvents()
 
@@ -249,20 +257,25 @@ class Window(
         )
 
     /**
-     * Clears the screen, draws every actor in [snapshots] (and its
+     * Clears the screen, draws every object in [snapshots] (and its
      * sub-objects) at its current position/size/rotation/colour, adjusted by
      * the current camera pan/zoom, overlays the current UI [Scene] (if any),
      * and presents the frame.
+     *
+     * Each entry is reduced to its drawable core first (see [drawableCore]):
+     * an `ActorSnapshot` / `AliveSnapshot` carries extra state this renderer
+     * does not use.
      */
-    fun render(snapshots: List<VisibleObjectSnapshot>) {
-        log.trace("Rendering {} actor(s)", snapshots.size)
+    fun render(snapshots: List<DrawableSnapshot>) {
+        log.trace("Rendering {} object(s)", snapshots.size)
         applyEdgePanning()
-        lastSnapshots = snapshots
+        val cores = snapshots.map { it.drawableCore() }
+        lastSnapshots = cores
 
         glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
 
         val camera = Camera(zoomFactor, panOffsetX, panOffsetY)
-        snapshots.forEach { snapshot -> drawActor(snapshot, camera) }
+        cores.forEach { core -> drawActor(core, camera) }
         drawClickMarkers(camera)
 
         currentSceneName?.let { name -> stage[name] }?.let { scene ->

@@ -137,12 +137,16 @@ data class Panel(
  * [value] and [maxValue] are read every frame through the `() -> Double`
  * primary constructor, so a bar built from live suppliers follows the stat as
  * it changes; the `Double` secondary constructor captures fixed numbers once.
+ * [visible] is polled every frame too: while it returns `false` the bar draws
+ * nothing at all (its own quad is transparent and it yields no [children]),
+ * so a bar can be wired to a selection that may or may not have the stat.
  * [position] is screen-relative like every other [Element].
  */
 class StatBar(
     override val position: Square = originSquare(),
     private val value: () -> Double,
     private val maxValue: () -> Double,
+    private val visible: () -> Boolean = { true },
     val trackColor: Color = DEFAULT_TRACK_COLOR,
     val fillColor: Color = DEFAULT_FILL_COLOR
 ) : Element(position, Color.TRANSPARENT), Container {
@@ -151,9 +155,10 @@ class StatBar(
         position: Square = originSquare(),
         value: Double,
         maxValue: Double,
+        visible: Boolean = true,
         trackColor: Color = DEFAULT_TRACK_COLOR,
         fillColor: Color = DEFAULT_FILL_COLOR
-    ) : this(position, { value }, { maxValue }, trackColor, fillColor)
+    ) : this(position, { value }, { maxValue }, { visible }, trackColor, fillColor)
 
     /**
      * How full the bar is this frame: [value] / [maxValue] clamped to
@@ -166,7 +171,7 @@ class StatBar(
         }
 
     override val children: List<Element>
-        get() = listOf(
+        get() = if (!visible()) emptyList() else listOf(
             Panel(position = screenRect(0.0, 0.0, 1.0, 1.0), color = trackColor),
             Panel(position = screenRect(0.0, 0.0, fraction, 1.0), color = fillColor)
         )
