@@ -30,8 +30,8 @@ private val log: Logger = LoggerFactory.getLogger(NetworkClient::class.java)
  * 2. **Dedicated channel**: `TXRXON`'s `sendPort` is the local port this
  *    client must listen on for `STATE <json>` world broadcasts and `PONG`
  *    replies; `receivePort` is the server's port outgoing commands
- *    (`PING`, `SET_DEST`, `SET_SPEED`, `STOP`) must be sent to. A second
- *    socket is opened on the assigned local port for all of this.
+ *    (`PING`, `SET_DEST`, `SET_SPEED`, `STOP`, `ATTACK`) must be sent to. A
+ *    second socket is opened on the assigned local port for all of this.
  *
  * The parsing/formatting of every message on the wire is delegated to
  * [ProtocolParsing], which has no socket dependency of its own - this class
@@ -106,6 +106,16 @@ class NetworkClient(
     /** Asks the server to stop actor [index] where it currently is. */
     fun stopActor(index: Int): Result<Unit> =
         sendCommand("STOP $index")
+
+    /**
+     * Asks the server to have owned actor [attackerIndex] attack the actor at
+     * [targetIndex]. Both are positions in the last `STATE` list, exactly as
+     * [setDestination]'s index is. The server issues the attack only if the
+     * attacker is one of this client's units and the target is an attackable
+     * actor; an ignored request produces no reply.
+     */
+    fun attack(attackerIndex: Int, targetIndex: Int): Result<Unit> =
+        sendCommand("ATTACK $attackerIndex $targetIndex")
 
     /** Sends a `PING`; a `PONG` reply (if any) arrives asynchronously on the dedicated channel. */
     fun ping(): Result<Unit> = sendCommand("PING")

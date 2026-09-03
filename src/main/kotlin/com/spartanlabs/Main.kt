@@ -43,6 +43,10 @@ private const val UPDATE_INTERVAL = 1.0 / UPDATES_PER_SECOND
 // Sound effect played on every right-click that issues a move order (see gameView()).
 private const val MOVE_COMMAND_SOUND = "beep-07a.mp3"
 
+// Sound effect played on a right-click that issues an attack order. Shares the
+// move sound's file for now; swap in its own once an attack cue is recorded.
+private const val ATTACK_COMMAND_SOUND = MOVE_COMMAND_SOUND
+
 /**
  * Entry point. Creates the [Window] and [NetworkClient], builds the UI
  * [Stage] (whose back-most element is a [Viewport] the game is played
@@ -105,6 +109,22 @@ private fun gameView(client: NetworkClient, window: Window, sounds: SoundPlayer)
             .onFailure { cause -> log.warn("Could not move actor {}: {}", actorIndex, cause.message) }
     }
 
+    override fun attack(attackerIndex: Int, xPx: Double, yPx: Double): Boolean {
+        val targetIndex = window.pick(xPx, yPx) ?: return false
+        if (targetIndex == attackerIndex) return false
+        // Only an Alive can be attacked; the target's ownerName is what tells an
+        // enemy unit from one of this client's own (which we treat as a move, not
+        // an attack). The picked index resolves against the same list getWorldState
+        // returns - see Window.pick / Window.render.
+        val target = client.getWorldState().getOrNull(targetIndex) as? AliveSnapshot ?: return false
+        if (target.ownerName == PLAYER_NAME) return false
+
+        sounds.play(ATTACK_COMMAND_SOUND)
+        client.attack(attackerIndex, targetIndex)
+            .onFailure { cause -> log.warn("Could not attack actor {}: {}", targetIndex, cause.message) }
+        return true
+    }
+
     override fun markLocation(xPx: Double, yPx: Double) = window.addClickMarker(xPx, yPx)
 
     override fun toggleScene() {
@@ -161,7 +181,7 @@ private fun buildStage(
                     ),
                     Label(
                         position = screenRect(x = 0.05, y = 0.52, width = 0.90, height = 0.16),
-                        text = "Right click: move selected actor"
+                        text = "Right click: move, or attack an enemy"
                     ),
                     Label(
                         position = screenRect(x = 0.05, y = 0.72, width = 0.90, height = 0.16),

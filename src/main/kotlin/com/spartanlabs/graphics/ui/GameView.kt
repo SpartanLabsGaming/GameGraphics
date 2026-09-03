@@ -22,6 +22,18 @@ interface GameView {
     fun moveActor(actorIndex: Int, xPx: Double, yPx: Double)
 
     /**
+     * Attempts to have actor [attackerIndex] attack whatever actor is drawn
+     * under the given window pixel.
+     *
+     * @return true if the pixel was over an attackable actor (an `Alive` the
+     * player does not own, and not the attacker itself) and an attack request
+     * was sent to the server; false if it was over empty space, terrain, the
+     * attacker, or one of the player's own units - in which case nothing is
+     * sent and the caller should fall back to a move order.
+     */
+    fun attack(attackerIndex: Int, xPx: Double, yPx: Double): Boolean
+
+    /**
      * Drops a short-lived, fading visual marker at the world position under
      * the given window pixel - the client-side "you right-clicked here" cue.
      * Purely cosmetic; the server is never told.

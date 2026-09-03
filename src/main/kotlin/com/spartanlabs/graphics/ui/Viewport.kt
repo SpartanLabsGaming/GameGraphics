@@ -19,9 +19,10 @@ private val log: Logger = LoggerFactory.getLogger(Viewport::class.java)
  *
  * - **left press**   - hit-tests the actors and selects the one under the
  *   cursor (client-side only; the server has no notion of a selection)
- * - **right press**  - drops a fading marker at the clicked spot (always),
- *   then asks the server to move the selected actor there; the move is a
- *   no-op if nothing is selected
+ * - **right press**  - with an actor selected, if the cursor is over an
+ *   attackable actor, asks the server to attack it; otherwise drops a fading
+ *   marker at the clicked spot and asks the server to move the selected actor
+ *   there. With nothing selected, only the marker is dropped.
  * - **middle press** - toggles between the menu and game scenes
  *
  * @property position defaults to the whole window (`0, 0, 1, 1`); it only
@@ -44,10 +45,7 @@ class Viewport(
 
         when (action.button) {
             LEFT_BUTTON -> selectActorUnder(action)
-            RIGHT_BUTTON -> {
-                game.markLocation(action.x, action.y)
-                moveSelectedActorTo(action)
-            }
+            RIGHT_BUTTON -> commandSelectedActor(action)
             MIDDLE_BUTTON -> game.toggleScene()
         }
     }
@@ -57,6 +55,21 @@ class Viewport(
         selectedActor
             ?.let { log.info("Selected actor {}", it) }
             ?: log.debug("Click at ({}, {}) selected no actor", action.x, action.y)
+    }
+
+    /**
+     * Routes a right click for the selected actor: an attack if the cursor is
+     * over an attackable target, otherwise a marker-and-move. With nothing
+     * selected, only the marker is dropped.
+     */
+    private fun commandSelectedActor(action: MouseAction) {
+        val actor = selectedActor
+        if (actor != null && game.attack(actor, action.x, action.y)) {
+            log.info("Actor {} ordered to attack the target at ({}, {})", actor, action.x, action.y)
+            return
+        }
+        game.markLocation(action.x, action.y)
+        moveSelectedActorTo(action)
     }
 
     private fun moveSelectedActorTo(action: MouseAction) {
