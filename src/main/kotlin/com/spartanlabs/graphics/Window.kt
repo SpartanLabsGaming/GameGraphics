@@ -4,8 +4,11 @@ import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
 import com.spartanlabs.gaming.networking.MouseAction
 import com.spartanlabs.gaming.networking.MouseActionType
+import com.spartanlabs.graphics.ui.KeyAction
+import com.spartanlabs.graphics.ui.KeyActionType
 import com.spartanlabs.graphics.ui.Scene
 import com.spartanlabs.graphics.ui.Stage
+import com.spartanlabs.graphics.ui.dispatchKey
 import com.spartanlabs.graphics.ui.dispatchMouse
 import com.spartanlabs.networking.Camera
 import com.spartanlabs.networking.NdcConverter
@@ -97,6 +100,11 @@ class Window(
     // driven by the cursor sitting near a window edge (see applyEdgePanning()).
     private var panOffsetX = 0.0f
     private var panOffsetY = 0.0f
+
+    // GLFW key codes currently held down, updated on every key callback (see
+    // handleKeyActionInternally). Only ever touched from the main/GLFW thread,
+    // same as width/height and zoomFactor above, so no synchronization needed.
+    private val keysDown = HashSet<Int>()
 
     private val vertexShaderSource = """
         #version 330 core
@@ -364,10 +372,23 @@ class Window(
     }.onFailure { cause -> log.error("Could not initialize the window", cause) }
 
     private fun registerCallbacks() {
+        // Keyboard -> PRESS/RELEASE key events routed into the current scene
+        // (see dispatchKeyAction). Escape still closes the window and is not
+        // forwarded; GLFW_REPEAT (key auto-repeat) is ignored so a held key
+        // reports exactly one PRESS and one RELEASE.
         glfwSetKeyCallback(handle) { win, key, _, action, _ ->
             if (key == GLFW_KEY_ESCAPE && action == GLFW_RELEASE) {
                 glfwSetWindowShouldClose(win, true)
+                return@glfwSetKeyCallback
             }
+
+            val type = when (action) {
+                GLFW_PRESS -> KeyActionType.PRESS
+                GLFW_RELEASE -> KeyActionType.RELEASE
+                else -> return@glfwSetKeyCallback
+            }
+
+            dispatchKeyAction(KeyAction(type, key))
         }
 
         glfwSetFramebufferSizeCallback(handle) { _, w, h ->
@@ -439,6 +460,37 @@ class Window(
     private fun routeMouseToScene(action: MouseAction) {
         val scene = currentSceneName?.let { name -> stage[name] } ?: return
         scene.dispatchMouse(action, width, height)
+    }
+
+    /** True if the given GLFW key code is currently held down. */
+    fun isKeyDown(key: Int): Boolean = key in keysDown
+
+    /**
+     * Invoked on every key press/release (never on auto-repeat). Tracks the
+     * held-key set for [isKeyDown], then routes the event into the current UI
+     * [Scene] so [com.spartanlabs.graphics.ui.Button]s bound to a key react.
+     */
+    private fun dispatchKeyAction(action: KeyAction) {
+        handleKeyActionInternally(action)
+        routeKeyToScene(action)
+    }
+
+    /** Keeps [keysDown] current and logs at trace level. */
+    private fun handleKeyActionInternally(action: KeyAction) {
+        log.trace("Internal key action: {}", action)
+        when (action.type) {
+            KeyActionType.PRESS -> keysDown += action.key
+            KeyActionType.RELEASE -> keysDown -= action.key
+        }
+    }
+
+    /**
+     * Broadcasts [action] to every element of the current UI [Scene] (keys are
+     * not spatial - see [Scene.dispatchKey]). Does nothing if no scene is shown.
+     */
+    private fun routeKeyToScene(action: KeyAction) {
+        val scene = currentSceneName?.let { name -> stage[name] } ?: return
+        scene.dispatchKey(action)
     }
 
     /**
