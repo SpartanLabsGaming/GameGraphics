@@ -32,7 +32,7 @@ val lwjglNatives = when {
 }
 
 dependencies {
-    api("io.github.spartanlaboratories:GameTools:1.6.0")
+    api("io.github.spartanlaboratories:GameTools:1.8.0")
 
     implementation(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
 

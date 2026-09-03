@@ -3,7 +3,7 @@ package com.spartanlabs
 import com.spartanlabs.audio.SoundPlayer
 import com.spartanlabs.gaming.gameobjects.AliveSnapshot
 import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
-import com.spartanlabs.gaming.gameobjects.StatGroupSnapshot
+import com.spartanlabs.gaming.gameobjects.CombinedStatSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
 import com.spartanlabs.geometry.Square
 import com.spartanlabs.graphics.Window
@@ -139,7 +139,7 @@ private fun buildStage(
         viewport.selectedActor?.let { client.getWorldState().getOrNull(it) }
     }
     val selected: () -> VisibleObjectSnapshot? = { selectedRaw()?.drawableCore() }
-    val selectedHealth: () -> StatGroupSnapshot? = { (selectedRaw() as? AliveSnapshot)?.health }
+    val selectedHealth: () -> CombinedStatSnapshot? = { (selectedRaw() as? AliveSnapshot)?.health }
 
     val info = bottomInfoPanel(selected, selectedHealth, windowWidth, windowHeight) { viewport.selectedActor }
 
@@ -224,7 +224,7 @@ private fun healthBarRect(panel: Square, windowWidth: Int, windowHeight: Int): S
  */
 private fun bottomInfoPanel(
     selected: () -> VisibleObjectSnapshot?,
-    health: () -> StatGroupSnapshot?,
+    health: () -> CombinedStatSnapshot?,
     windowWidth: Int,
     windowHeight: Int,
     selectedIndex: () -> Int?

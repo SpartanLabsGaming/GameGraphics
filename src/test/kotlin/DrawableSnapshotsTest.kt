@@ -1,7 +1,7 @@
 import com.spartanlabs.gaming.gameobjects.ActorSnapshot
 import com.spartanlabs.gaming.gameobjects.AliveSnapshot
+import com.spartanlabs.gaming.gameobjects.CombinedStatSnapshot
 import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
-import com.spartanlabs.gaming.gameobjects.StatGroupSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
 import com.spartanlabs.geometry.serializations.PointSnapshot
 import com.spartanlabs.networking.drawableCore
@@ -33,10 +33,14 @@ class DrawableSnapshotsTest {
     private fun alive(texture: String) =
         AliveSnapshot(
             actor(texture),
-            health = StatGroupSnapshot(50.0, 100.0, 100.0),
+            health = CombinedStatSnapshot(50.0, 100.0),
             faction = "red",
             ownerName = "Player1",
-            damage = 10.0
+            damage = 10.0,
+            attackTime = 1.7,
+            attackSpeed = 100.0,
+            attackRange = 750.0,
+            evasion = 0.0
         )
 
     /** Serializes the way GameServer.broadcast does, then decodes the way NetworkClient does. */
