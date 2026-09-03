@@ -5,13 +5,14 @@ build/
 !**/src/test/**/build/
 
 ### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
+.idea/
 *.iws
 *.iml
 *.ipr
+
+### Claude Code ###
+.claude/
+
 out/
 !**/src/main/**/out/
 !**/src/test/**/out/
