@@ -3,10 +3,11 @@ package com.spartanlabs
 import com.spartanlabs.audio.SoundPlayer
 import com.spartanlabs.gaming.gameobjects.AliveSnapshot
 import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
-import com.spartanlabs.gaming.gameobjects.CombinedStatSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
 import com.spartanlabs.geometry.Square
 import com.spartanlabs.graphics.Window
+import com.spartanlabs.graphics.ui.Button
+import com.spartanlabs.graphics.ui.ButtonListener
 import com.spartanlabs.graphics.ui.Color
 import com.spartanlabs.graphics.ui.GameView
 import com.spartanlabs.graphics.ui.Label
@@ -19,6 +20,7 @@ import com.spartanlabs.graphics.ui.Viewport
 import com.spartanlabs.graphics.ui.screenRect
 import com.spartanlabs.networking.NetworkClient
 import com.spartanlabs.networking.drawableCore
+import org.lwjgl.glfw.GLFW.GLFW_KEY_B
 import org.lwjgl.glfw.GLFW.glfwGetTime
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -76,7 +78,7 @@ fun main() {
 
         val viewport = Viewport(gameView(client, window, sounds)) // fills the window by default
         val (windowWidth, windowHeight) = window.sizePx()
-        window.loadStage(buildStage(viewport, client, windowWidth, windowHeight))
+        window.loadStage(buildStage(viewport, client, sounds, windowWidth, windowHeight))
         window.showScene(MENU_SCENE)
             .onFailure { cause -> log.warn("Could not show the menu scene: {}", cause.message) }
 
@@ -147,21 +149,31 @@ private fun gameView(client: NetworkClient, window: Window, sounds: SoundPlayer)
 private fun buildStage(
     viewport: Viewport,
     client: NetworkClient,
+    sounds: SoundPlayer,
     windowWidth: Int,
     windowHeight: Int
 ): Stage {
     // The object the player last left-clicked, resolved live against the newest
     // world state every frame (null once nothing's picked or the object is
     // gone). `selected` is its drawable core, shared by the portrait and the
-    // info labels; `selectedHealth` is non-null only when that object is an
-    // Alive, which is what gates the health bar.
+    // header label; `selectedAlive` is non-null only when that object is an
+    // Alive, which is what gates the health bar and fills the stats panel.
     val selectedRaw: () -> DrawableSnapshot? = {
         viewport.selectedActor?.let { client.getWorldState().getOrNull(it) }
     }
     val selected: () -> VisibleObjectSnapshot? = { selectedRaw()?.drawableCore() }
-    val selectedHealth: () -> CombinedStatSnapshot? = { (selectedRaw() as? AliveSnapshot)?.health }
+    val selectedAlive: () -> AliveSnapshot? = { selectedRaw() as? AliveSnapshot }
 
-    val info = bottomInfoPanel(selected, selectedHealth, windowWidth, windowHeight) { viewport.selectedActor }
+    val info = bottomInfoPanel(selected, selectedAlive, sounds, windowWidth, windowHeight) { viewport.selectedActor }
+
+    // A demo Button: highlights on hover, turns green while held (by the mouse
+    // or by its assigned "B" key), and beeps on every activation.
+    val beepButton = Button(
+        name = "BEEP (B)",
+        listener = beepButtonListener(sounds),
+        position = screenRect(x = 0.03, y = 0.82, width = 0.12, height = 0.045),
+        key = GLFW_KEY_B
+    )
 
     val menu = Scene().apply {
         add(viewport)
@@ -190,6 +202,7 @@ private fun buildStage(
                 )
             )
         )
+        add(beepButton)
         add(info)
     }
 
@@ -211,16 +224,38 @@ private fun buildStage(
     }
 }
 
+/**
+ * A [ButtonListener] for the demo BEEP button: it logs when the cursor enters
+ * the button and plays [MOVE_COMMAND_SOUND] on every activation (a full
+ * mouse click, or a press of the button's assigned key).
+ */
+private fun beepButtonListener(sounds: SoundPlayer): ButtonListener = object : ButtonListener {
+
+    override fun onMouseOver(button: Button) {
+        log.debug("Cursor over button '{}'", button.name)
+    }
+
+    override fun onClick(button: Button) {
+        log.info("Button '{}' activated", button.name)
+        sounds.play(MOVE_COMMAND_SOUND)
+    }
+}
+
 /** The bottom-of-screen inspector panel's box, as a fraction of the window. */
 private val INFO_PANEL_RECT = screenRect(x = 0.25, y = 0.85, width = 0.50, height = 0.15)
 
-// The "healthbar" spans the info panel to the right of the portrait. Its width
-// is a fixed fraction of the panel; its height fraction is derived from the
-// window size (see healthBarRect) so the *rendered* bar stays about this
-// aspect - height ~= 0.2 * width - whatever the window's shape.
-private const val HEALTH_BAR_X = 0.17
-private const val HEALTH_BAR_WIDTH = 0.81
-private const val HEALTH_BAR_HEIGHT_OVER_WIDTH = 0.2
+// The info panel is split left-to-right: the portrait, then a narrow column
+// holding the selection header, the healthbar and the action buttons, then the
+// stats panel filling the rest. Every box below is a fraction of the info panel.
+
+// The "healthbar" sits in the middle column, under the header. Its width is a
+// fixed fraction of the panel; its height fraction is derived from the window
+// size (see healthBarRect) so the *rendered* bar stays about this aspect -
+// height ~= 0.05 * width - whatever the window's shape.
+private const val HEALTH_BAR_X = 0.49
+private const val HEALTH_BAR_Y = 0.10
+private const val HEALTH_BAR_WIDTH = 0.46
+private const val HEALTH_BAR_HEIGHT_OVER_WIDTH = 0.05
 
 /**
  * The "healthbar"'s box within [panel], picked so its rendered pixel height is
@@ -231,20 +266,97 @@ private fun healthBarRect(panel: Square, windowWidth: Int, windowHeight: Int): S
     val renderedWidthPx = HEALTH_BAR_WIDTH * panel.dimensions.width * windowWidth
     val renderedHeightPx = HEALTH_BAR_HEIGHT_OVER_WIDTH * renderedWidthPx
     val heightFraction = (renderedHeightPx / (panel.dimensions.height * windowHeight)).coerceIn(0.0, 1.0)
-    return screenRect(HEALTH_BAR_X, (1.0 - heightFraction) / 2.0, HEALTH_BAR_WIDTH, heightFraction)
+    return screenRect(HEALTH_BAR_X, HEALTH_BAR_Y, HEALTH_BAR_WIDTH, heightFraction)
+}
+
+// Two square action buttons in a row just below the healthbar, left-aligned with
+// it. ACTION_BUTTON_SIDE is a fraction of the panel's *height*; the matching
+// width fraction is worked out per window size so each button renders as a true
+// on-screen square (see actionButtonRect). ACTION_BUTTON_GAP is the space
+// between the two, as a fraction of the panel's width.
+private const val ACTION_BUTTON_X = HEALTH_BAR_X + 0.02
+private const val ACTION_BUTTON_Y = 0.44
+private const val ACTION_BUTTON_GAP = 0.02
+
+private fun actionButtonRect(column: Int): Square {
+    val width = HEALTH_BAR_WIDTH * 0.23
+    val x = ACTION_BUTTON_X + column * (width + ACTION_BUTTON_GAP)
+    return screenRect(x, ACTION_BUTTON_Y, width, width)
+}
+
+// The stats panel fills the info panel to the right of the portrait/health
+// column. Its labels are a plain STATS_COLUMNS x STATS_ROWS grid (10 cells for
+// the 10 Alive stats we show).
+private val STATS_PANEL_RECT = screenRect(x = 0.17, y = 0.1, width = 0.28, height = 0.85)
+private const val STATS_COLUMNS = 2
+private const val STATS_ROWS = 5
+
+/** Text colour shared by the header label and every stat label. */
+private val LABEL_COLOR = Color(220, 225, 235)
+
+/**
+ * The box for the stat label at ([column], [row]) as a fraction of the stats
+ * panel: an even [STATS_COLUMNS] x [STATS_ROWS] grid with each cell inset a
+ * little so neighbouring labels do not run together.
+ */
+private fun statCellRect(column: Int, row: Int): Square {
+    val cellWidth = 1.0 / STATS_COLUMNS
+    val cellHeight = 1.0 / STATS_ROWS
+    return screenRect(
+        x = column * cellWidth + 0.03,
+        y = row * cellHeight + 0.02,
+        width = cellWidth - 0.05,
+        height = cellHeight - 0.04
+    )
+}
+
+/**
+ * The stats sub-panel: the selected [AliveSnapshot]'s faction, owner, health,
+ * damage, movement speed, four attack stats, evasion and destination, one per
+ * [Label] in a two-column grid. Position, size, facing and texture are left out
+ * on purpose - the portrait and header already cover the drawable state. Each
+ * label re-reads [alive] every frame and shows nothing while the selection is
+ * not an [AliveSnapshot].
+ */
+private fun statsPanel(alive: () -> AliveSnapshot?): Panel {
+    // "name  value" for the current selection, or "" when nothing Alive is picked.
+    fun stat(column: Int, row: Int, name: String, value: (AliveSnapshot) -> String): Label =
+        Label(
+            position = statCellRect(column, row),
+            textColor = LABEL_COLOR,
+            textSource = { alive()?.let { "$name  ${value(it)}" } ?: "" }
+        )
+
+    return Panel(
+        position = STATS_PANEL_RECT,
+        color = Color(10, 12, 22, 160),
+        children = listOf(
+            stat(column = 0, row = 0, name = "Faction") { it.faction },
+            stat(column = 0, row = 1, name = "Owner") { it.ownerName ?: "none" },
+            stat(column = 0, row = 2, name = "Health") { "${fmt(it.health.value)} / ${fmt(it.health.maxValue)}" },
+            stat(column = 0, row = 3, name = "Damage") { fmt(it.damage) },
+            stat(column = 0, row = 4, name = "Speed") { dec(it.actor.speed) },
+            stat(column = 1, row = 0, name = "Atk time") { dec(it.attackTime) },
+            stat(column = 1, row = 1, name = "Atk speed") { fmt(it.attackSpeed) },
+            stat(column = 1, row = 2, name = "Atk range") { fmt(it.attackRange) },
+            stat(column = 1, row = 3, name = "Evasion") { dec(it.evasion) },
+            stat(column = 1, row = 4, name = "Dest") { "${fmt(it.actor.destination.x)}, ${fmt(it.actor.destination.y)}" },
+        )
+    )
 }
 
 /**
  * The bottom-of-screen inspector: a [Portrait] of the selected object on the
- * left, a [StatBar] "healthbar" behind the read-out (shown only while the
- * selection has a health stat), and [Label]s reading out its index, position,
- * size and facing on top. Every child re-reads [selected] / [selectedIndex] /
- * [health] each frame, so the panel updates the instant a new object is
- * clicked and tracks it as it moves.
+ * left, then a narrow column with the selection header, a [StatBar] "healthbar"
+ * (shown only while an [AliveSnapshot] is selected) and two square action
+ * [Button]s, then a [statsPanel] filling the rest. Every child re-reads
+ * [selected] / [selectedAlive] / [selectedIndex] each frame, so the panel
+ * updates the instant a new object is clicked and tracks it as it moves.
  */
 private fun bottomInfoPanel(
     selected: () -> VisibleObjectSnapshot?,
-    health: () -> CombinedStatSnapshot?,
+    selectedAlive: () -> AliveSnapshot?,
+    sounds: SoundPlayer,
     windowWidth: Int,
     windowHeight: Int,
     selectedIndex: () -> Int?
@@ -256,28 +368,37 @@ private fun bottomInfoPanel(
             subject = selected,
             position = screenRect(x = 0.02, y = 0.10, width = 0.13, height = 0.80)
         ),
+        // Selection header, above the healthbar in the middle column.
+        Label(
+            position = screenRect(x = 0.17, y = 0.04, width = 0.30, height = 0.20),
+            textColor = LABEL_COLOR,
+            textSource = { selectedIndex()?.let { "Actor #$it" } ?: "Nothing selected" }
+        ),
         StatBar(
             position = healthBarRect(INFO_PANEL_RECT, windowWidth, windowHeight),
-            value = { health()?.value ?: 0.0 },
-            maxValue = { health()?.maxValue ?: 1.0 },
-            visible = { health() != null }
+            value = { selectedAlive()?.health?.value ?: 0.0 },
+            maxValue = { selectedAlive()?.health?.maxValue ?: 1.0 },
+            visible = { selectedAlive() != null }
         ),
-        infoLabel(row = 0) { selectedIndex()?.let { "Actor #$it" } ?: "Nothing selected" },
-        infoLabel(row = 1) { selected()?.let { "Pos   ${fmt(it.gameObject.location.x)}, ${fmt(it.gameObject.location.y)}" } ?: "" },
-        infoLabel(row = 2) { selected()?.let { "Size  ${fmt(it.dimensions.width)} x ${fmt(it.dimensions.height)}" } ?: "" },
-        infoLabel(row = 3) { selected()?.let { "Angle ${it.angle}${if (it.turns) "" else " (fixed)"}" } ?: "" }
+        statsPanel(selectedAlive),
+        Button(
+            name = "Q",
+            listener = beepButtonListener(sounds),
+            position = actionButtonRect(0)
+        ),
+        Button(
+            name = "W",
+            listener = beepButtonListener(sounds),
+            position = actionButtonRect(1)
+        ),
     )
 )
 
-/** One line of the info panel's read-out, stacked by [row] (0..3), right of the portrait. */
-private fun infoLabel(row: Int, text: () -> String): Label =
-    Label(
-        position = screenRect(x = 0.18, y = 0.06 + row * 0.24, width = 0.80, height = 0.22),
-        textColor = Color(220, 225, 235),
-        textSource = text
-    )
-
+/** A whole-number readout of [value] - health, ranges, destination coordinates. */
 private fun fmt(value: Double): String = "%.0f".format(value)
+
+/** A two-decimal readout of [value] - the small stats like attack time and evasion. */
+private fun dec(value: Double): String = "%.2f".format(value)
 
 private fun runLoop(window: Window, client: NetworkClient) {
     var previousTime = glfwGetTime()
