@@ -99,6 +99,16 @@ class NetworkClient(
         sendCommand(ClientCommands.stop(entityId))
 
     /**
+     * Asks the server to have the unit with entity id [followerEntityId] chase
+     * the unit with entity id [targetEntityId], re-pointing at the target's
+     * position every tick (GameTools' `Follow` command). Both name objects by
+     * the stable [com.spartanlabs.gaming.gameobjects.DrawableSnapshot.id] on
+     * every `STATE` entry.
+     */
+    fun follow(followerEntityId: Long, targetEntityId: Long): Result<Unit> =
+        sendCommand(ClientCommands.follow(followerEntityId, targetEntityId))
+
+    /**
      * Asks the server to have this client's unit [attackerId] attack unit
      * [targetId]. Both name objects by the stable
      * [com.spartanlabs.gaming.gameobjects.DrawableSnapshot.id] carried on every

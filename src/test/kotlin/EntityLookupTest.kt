@@ -6,6 +6,7 @@ import com.spartanlabs.gaming.gameobjects.EntityId
 import com.spartanlabs.geometry.serializations.PointSnapshot
 import com.spartanlabs.networking.attackTarget
 import com.spartanlabs.networking.byEntityId
+import com.spartanlabs.networking.nearestEnemy
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.DisplayName
@@ -19,12 +20,12 @@ import org.junit.jupiter.api.Test
  */
 class EntityLookupTest {
 
-    private fun alive(id: Long, owner: String?): AliveSnapshot =
+    private fun alive(id: Long, owner: String?, x: Double = 0.0, y: Double = 0.0): AliveSnapshot =
         AliveSnapshot(
             id = EntityId(id),
             actor = ActorSnapshot(
                 id = EntityId(id),
-                visibleObject = visibleObjectSnapshot(id = id, texture = "unit.png"),
+                visibleObject = visibleObjectSnapshot(id = id, x = x, y = y, texture = "unit.png"),
                 speed = 1.0,
                 destination = PointSnapshot(0.0, 0.0)
             ),
@@ -119,6 +120,76 @@ class EntityLookupTest {
             val state: List<DrawableSnapshot> = listOf(alive(id = 10L, owner = "Player1"))
 
             assertNull(state.attackTarget(attackerId = 10L, targetId = EntityId.UNASSIGNED.raw, playerName = "Player1"))
+        }
+    }
+
+    @Nested
+    @DisplayName("nearestEnemy()")
+    inner class NearestEnemy {
+
+        @Test
+        fun `picks the closest enemy by world distance`() {
+            val attacker = alive(id = 10L, owner = "Player1", x = 0.0, y = 0.0)
+            val far = alive(id = 20L, owner = "Player2", x = 10.0, y = 0.0)
+            val near = alive(id = 21L, owner = "Player2", x = 3.0, y = 0.0)
+            val state: List<DrawableSnapshot> = listOf(attacker, far, near)
+
+            assertSame(near, state.nearestEnemy(attackerId = 10L, playerName = "Player1"))
+        }
+
+        @Test
+        fun `ignores the player's own units`() {
+            val attacker = alive(id = 10L, owner = "Player1", x = 0.0, y = 0.0)
+            val ownCloser = alive(id = 11L, owner = "Player1", x = 1.0, y = 0.0)
+            val enemy = alive(id = 20L, owner = "Player2", x = 5.0, y = 0.0)
+            val state: List<DrawableSnapshot> = listOf(attacker, ownCloser, enemy)
+
+            assertSame(enemy, state.nearestEnemy(attackerId = 10L, playerName = "Player1"))
+        }
+
+        @Test
+        fun `ignores non-Alive objects even when they are closer`() {
+            val attacker = alive(id = 10L, owner = "Player1", x = 0.0, y = 0.0)
+            val terrain = visibleObjectSnapshot(id = 30L, x = 1.0, y = 0.0)
+            val enemy = alive(id = 20L, owner = "Player2", x = 9.0, y = 0.0)
+            val state: List<DrawableSnapshot> = listOf(attacker, terrain, enemy)
+
+            assertSame(enemy, state.nearestEnemy(attackerId = 10L, playerName = "Player1"))
+        }
+
+        @Test
+        fun `treats an unowned creep as an enemy`() {
+            val attacker = alive(id = 10L, owner = "Player1", x = 0.0, y = 0.0)
+            val creep = alive(id = 20L, owner = null, x = 2.0, y = 0.0)
+            val state: List<DrawableSnapshot> = listOf(attacker, creep)
+
+            assertSame(creep, state.nearestEnemy(attackerId = 10L, playerName = "Player1"))
+        }
+
+        @Test
+        fun `skips the attacker itself and unidentified objects`() {
+            val attacker = alive(id = 10L, owner = "Player1", x = 0.0, y = 0.0)
+            val unidentified = alive(id = EntityId.UNASSIGNED.raw, owner = "Player2", x = 1.0, y = 0.0)
+            val enemy = alive(id = 20L, owner = "Player2", x = 8.0, y = 0.0)
+            val state: List<DrawableSnapshot> = listOf(attacker, unidentified, enemy)
+
+            assertSame(enemy, state.nearestEnemy(attackerId = 10L, playerName = "Player1"))
+        }
+
+        @Test
+        fun `returns null when the attacker is not in the list`() {
+            val state: List<DrawableSnapshot> = listOf(alive(id = 20L, owner = "Player2", x = 3.0, y = 0.0))
+
+            assertNull(state.nearestEnemy(attackerId = 99L, playerName = "Player1"))
+        }
+
+        @Test
+        fun `returns null when there is no enemy`() {
+            val attacker = alive(id = 10L, owner = "Player1", x = 0.0, y = 0.0)
+            val own = alive(id = 11L, owner = "Player1", x = 1.0, y = 0.0)
+            val state: List<DrawableSnapshot> = listOf(attacker, own)
+
+            assertNull(state.nearestEnemy(attackerId = 10L, playerName = "Player1"))
         }
     }
 }

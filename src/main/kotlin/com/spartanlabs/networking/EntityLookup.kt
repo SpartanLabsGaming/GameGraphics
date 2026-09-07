@@ -3,6 +3,7 @@ package com.spartanlabs.networking
 import com.spartanlabs.gaming.gameobjects.AliveSnapshot
 import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
 import com.spartanlabs.gaming.gameobjects.EntityId
+import kotlin.math.hypot
 
 /**
  * Resolving a `STATE` list by the stable entity id GameTools stamps on every
@@ -43,4 +44,30 @@ internal fun List<DrawableSnapshot>.attackTarget(
     if (targetId == attackerId || targetId == EntityId.UNASSIGNED.raw) return null
     val target = byEntityId(targetId) as? AliveSnapshot ?: return null
     return target.takeIf { it.ownerName != playerName }
+}
+
+/**
+ * The attackable enemy [AliveSnapshot] closest to the unit with entity id
+ * [attackerId], or `null` when there is none - the fallback target for a forced
+ * attack click (see [com.spartanlabs.graphics.ui.ClickState.ATTACK]) that landed
+ * on empty ground.
+ *
+ * "Enemy" is any [AliveSnapshot] whose [AliveSnapshot.ownerName] is not
+ * [playerName] (so other players' units and unowned creeps both count), other
+ * than the attacker itself and any unidentified object. Distance is measured in
+ * world coordinates between the drawable cores. Returns `null` if [attackerId]
+ * is not in the list.
+ *
+ * @param attackerId the ordering unit's entity id
+ * @param playerName this client's name, as it appears in [AliveSnapshot.ownerName]
+ */
+internal fun List<DrawableSnapshot>.nearestEnemy(attackerId: Long, playerName: String): AliveSnapshot? {
+    val origin = byEntityId(attackerId)?.drawableCore()?.gameObject?.location ?: return null
+    return asSequence()
+        .filterIsInstance<AliveSnapshot>()
+        .filter { it.id.raw != attackerId && it.id.raw != EntityId.UNASSIGNED.raw && it.ownerName != playerName }
+        .minByOrNull { enemy ->
+            val here = enemy.drawableCore().gameObject.location
+            hypot(here.x - origin.x, here.y - origin.y)
+        }
 }

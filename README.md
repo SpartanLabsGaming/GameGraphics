@@ -51,10 +51,17 @@ window still opens; it just shows an empty world.
 | **Left click** | Select the actor under the cursor (client-side only); a green outline marks it in the world |
 | **Right click** | With a selection: attack the enemy actor under the cursor, otherwise move there (and drop a fading marker). With no selection: just the marker. |
 | **Middle click** | Toggle between the menu and game scenes |
+| **`M`** then left click | Force a **move** order for the selection: `Follow` if the click lands on another actor, otherwise `MoveTo`. Right click cancels; `M` again disarms. |
+| **`A`** then left click | Force an **attack** order for the selection: the target under the cursor if valid, otherwise the nearest enemy anywhere. Right click cancels; `A` again disarms. |
+| **`S`** | Stop the selected unit where it stands (immediate — not a click state) |
 | **Scroll wheel** | Zoom the camera |
 | **Cursor near a window edge** | Pan the camera |
 | **`B`** | Demo button ("BEEP (B)") — also clickable with the mouse |
 | **Escape** | Quit |
+
+`M` / `A` arm a one-shot **click state** on the `Viewport` (`ClickState.MOVE` /
+`ClickState.ATTACK`); issuing the order, or a right click, returns it to
+`ClickState.DEFAULT`. Selection is suspended while a state is armed.
 
 ---
 
@@ -125,10 +132,11 @@ Orders use GameTools 5.0.0's `ClientCommand` protocol: one `COMMAND` verb whose
 payload is a polymorphic JSON object (a `type` discriminator, same shape as
 `STATE` / `INPUT`), encoded and decoded by a `ClientCommandCodec` that both this
 client and the server build the same way (the six standard `gametools.*`
-commands, no app module). The client emits three of them:
+commands, no app module). The client emits four of them:
 
 ```
 COMMAND {"type":"gametools.moveTo","actor":7,"x":120.0,"y":-40.0}
+COMMAND {"type":"gametools.follow","actor":7,"target":13}
 COMMAND {"type":"gametools.attack","attacker":7,"target":13}
 COMMAND {"type":"gametools.stop","actor":7}
 ```

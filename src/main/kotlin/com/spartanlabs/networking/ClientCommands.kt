@@ -3,6 +3,7 @@ package com.spartanlabs.networking
 import com.spartanlabs.gaming.gameobjects.EntityId
 import com.spartanlabs.gaming.networking.command.Attack
 import com.spartanlabs.gaming.networking.command.ClientCommandCodec
+import com.spartanlabs.gaming.networking.command.Follow
 import com.spartanlabs.gaming.networking.command.MoveTo
 import com.spartanlabs.gaming.networking.command.Stop
 
@@ -16,9 +17,8 @@ import com.spartanlabs.gaming.networking.command.Stop
  * around ([EntityLookup]) and wrapped at the boundary. The server decodes with a
  * [ClientCommandCodec] built the same way - the six standard `gametools.*`
  * commands, no application module - so the two ends agree with no shared schema
- * file. Only [MoveTo], [Stop] and [Attack] are emitted; the client has no UI
- * for [com.spartanlabs.gaming.networking.command.Follow],
- * [com.spartanlabs.gaming.networking.command.MoveDir] or
+ * file. Only [MoveTo], [Follow], [Stop] and [Attack] are emitted; the client
+ * has no UI for [com.spartanlabs.gaming.networking.command.MoveDir] or
  * [com.spartanlabs.gaming.networking.command.StopAttack] yet.
  *
  * `PING` stays a raw token (see [NetworkClient.ping]) - it never became a
@@ -31,6 +31,10 @@ internal object ClientCommands {
     /** `COMMAND` order: send unit [entityId] to world point ([x], [y]) and stop there. */
     fun moveTo(entityId: Long, x: Double, y: Double): String =
         codec.encode(MoveTo(EntityId(entityId), x, y))
+
+    /** `COMMAND` order: have unit [followerId] chase unit [targetId], re-homing every tick. */
+    fun follow(followerId: Long, targetId: Long): String =
+        codec.encode(Follow(EntityId(followerId), EntityId(targetId)))
 
     /** `COMMAND` order: halt unit [entityId] where it currently is. */
     fun stop(entityId: Long): String =

@@ -1,6 +1,7 @@
 import com.spartanlabs.gaming.gameobjects.EntityId
 import com.spartanlabs.gaming.networking.command.Attack
 import com.spartanlabs.gaming.networking.command.ClientCommandCodec
+import com.spartanlabs.gaming.networking.command.Follow
 import com.spartanlabs.gaming.networking.command.MoveTo
 import com.spartanlabs.gaming.networking.command.Stop
 import com.spartanlabs.networking.ClientCommands
@@ -33,6 +34,14 @@ class ClientCommandsTest {
     @Test
     fun `stop round-trips to a Stop naming the same unit`() {
         assertEquals(Stop(EntityId(3L)), decodeAsServer(ClientCommands.stop(entityId = 3L)))
+    }
+
+    @Test
+    fun `follow round-trips to a Follow with follower and target preserved`() {
+        assertEquals(
+            Follow(EntityId(4L), EntityId(8L)),
+            decodeAsServer(ClientCommands.follow(followerId = 4L, targetId = 8L))
+        )
     }
 
     @Test

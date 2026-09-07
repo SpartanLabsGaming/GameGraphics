@@ -42,6 +42,34 @@ interface GameView {
     fun attack(attackerEntityId: Long, xPx: Double, yPx: Double): Boolean
 
     /**
+     * Asks the server to have the unit with entity id [followerEntityId] chase
+     * the unit with entity id [targetEntityId] (GameTools' `Follow` command -
+     * the follower re-homes on the target's position every tick). A no-op
+     * (logged) if the follower is no longer in the world state; the target may
+     * be any actor, including one of the player's own.
+     */
+    fun follow(followerEntityId: Long, targetEntityId: Long)
+
+    /**
+     * Asks the server to halt the unit with entity id [entityId] where it is
+     * (GameTools' `Stop` command - a movement order, it does not call off an
+     * attack). A no-op (logged) if that unit is no longer in the world state.
+     */
+    fun stop(entityId: Long)
+
+    /**
+     * Attacks the nearest attackable enemy anywhere in the current world state -
+     * the fallback for a forced attack click (see
+     * [com.spartanlabs.graphics.ui.ClickState.ATTACK]) that did not land on a
+     * target. "Enemy" is any `Alive` not owned by this player; nearest is by
+     * world distance from the attacker.
+     *
+     * @return true if an enemy was found and an attack request was sent; false
+     * if [attackerEntityId] is gone from the world state or there is no enemy
+     */
+    fun attackNearestEnemy(attackerEntityId: Long): Boolean
+
+    /**
      * Drops a short-lived, fading visual marker at the world position under
      * the given window pixel - the client-side "you right-clicked here" cue.
      * Purely cosmetic; the server is never told.

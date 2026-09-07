@@ -22,6 +22,7 @@ import com.spartanlabs.networking.NetworkClient
 import com.spartanlabs.networking.attackTarget
 import com.spartanlabs.networking.byEntityId
 import com.spartanlabs.networking.drawableCore
+import com.spartanlabs.networking.nearestEnemy
 import org.lwjgl.glfw.GLFW.GLFW_KEY_B
 import org.lwjgl.glfw.GLFW.glfwGetTime
 import org.slf4j.Logger
@@ -163,6 +164,35 @@ private fun gameView(client: NetworkClient, window: Window, sounds: SoundPlayer)
         return true
     }
 
+    override fun follow(followerEntityId: Long, targetEntityId: Long) {
+        if (client.getWorldState().byEntityId(followerEntityId) == null) {
+            log.debug("Follow order dropped - unit {} is no longer in the world state", followerEntityId)
+            return
+        }
+        sounds.play(MOVE_COMMAND_SOUND)
+        client.follow(followerEntityId, targetEntityId)
+            .onFailure { cause -> log.warn("Could not make unit {} follow {}: {}", followerEntityId, targetEntityId, cause.message) }
+    }
+
+    override fun stop(entityId: Long) {
+        if (client.getWorldState().byEntityId(entityId) == null) {
+            log.debug("Stop order dropped - unit {} is no longer in the world state", entityId)
+            return
+        }
+        sounds.play(MOVE_COMMAND_SOUND)
+        client.stop(entityId)
+            .onFailure { cause -> log.warn("Could not stop unit {}: {}", entityId, cause.message) }
+    }
+
+    override fun attackNearestEnemy(attackerEntityId: Long): Boolean {
+        val target = client.getWorldState().nearestEnemy(attackerEntityId, PLAYER_NAME) ?: return false
+
+        sounds.play(ATTACK_COMMAND_SOUND)
+        client.attack(attackerEntityId, target.id.raw)
+            .onFailure { cause -> log.warn("Could not attack nearest enemy {}: {}", target.id.raw, cause.message) }
+        return true
+    }
+
     override fun markLocation(xPx: Double, yPx: Double) = window.addClickMarker(xPx, yPx)
 
     override fun toggleScene() {
@@ -215,24 +245,36 @@ private fun buildStage(
         add(viewport)
         add(
             Panel(
-                position = screenRect(x = 0.03, y = 0.50, width = 0.30, height = 0.30),
+                position = screenRect(x = 0.03, y = 0.40, width = 0.30, height = 0.46),
                 color = Color(20, 24, 40, 220),
                 children = listOf(
                     Label(
-                        position = screenRect(x = 0.05, y = 0.05, width = 0.90, height = 0.20),
+                        position = screenRect(x = 0.05, y = 0.03, width = 0.90, height = 0.14),
                         color = Color(60, 90, 160, 255),
                         text = "MAIN MENU"
                     ),
                     Label(
-                        position = screenRect(x = 0.05, y = 0.32, width = 0.90, height = 0.16),
+                        position = screenRect(x = 0.05, y = 0.19, width = 0.90, height = 0.10),
                         text = "Left click: select an actor"
                     ),
                     Label(
-                        position = screenRect(x = 0.05, y = 0.52, width = 0.90, height = 0.16),
+                        position = screenRect(x = 0.05, y = 0.30, width = 0.90, height = 0.10),
                         text = "Right click: move, or attack an enemy"
                     ),
                     Label(
-                        position = screenRect(x = 0.05, y = 0.72, width = 0.90, height = 0.16),
+                        position = screenRect(x = 0.05, y = 0.41, width = 0.90, height = 0.10),
+                        text = "M then left click: force move / follow"
+                    ),
+                    Label(
+                        position = screenRect(x = 0.05, y = 0.52, width = 0.90, height = 0.10),
+                        text = "A then left click: force attack / nearest enemy"
+                    ),
+                    Label(
+                        position = screenRect(x = 0.05, y = 0.63, width = 0.90, height = 0.10),
+                        text = "S: stop the selected unit"
+                    ),
+                    Label(
+                        position = screenRect(x = 0.05, y = 0.74, width = 0.90, height = 0.10),
                         text = "Middle click: toggle scene"
                     )
                 )
