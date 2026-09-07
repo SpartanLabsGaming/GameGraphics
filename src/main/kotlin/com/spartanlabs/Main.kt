@@ -35,12 +35,15 @@ private const val TITLE = "Kotlin LWJGL - Game Client"
 private const val MENU_SCENE = "Menu"
 private const val GAME_SCENE = "Game"
 
-// The server this client connects to, and the name it hands the server
-// during the handshake. Change SERVER_HOST to point at a real server;
-// PLAYER_NAME must not contain whitespace (handshake messages are
-// whitespace-split on the server side).
-private const val SERVER_HOST = "127.0.0.1"
-private const val PLAYER_NAME = "Player1"
+// The server this client connects to, and the name it hands the server during
+// the handshake. Both default to production but take an environment-variable
+// override, so one build can run against a local server without editing source:
+//   GG_SERVER_HOST - server address or hostname (default: the production server)
+//   GG_PLAYER_NAME - this client's handshake name (default: "Player1")
+// PLAYER_NAME must not contain whitespace - the server whitespace-splits
+// handshake messages.
+private val SERVER_HOST: String = System.getenv("GG_SERVER_HOST") ?: "35.238.38.189"
+private val PLAYER_NAME: String = System.getenv("GG_PLAYER_NAME") ?: "Player1"
 
 private const val UPDATES_PER_SECOND = 60.0
 private const val UPDATE_INTERVAL = 1.0 / UPDATES_PER_SECOND

@@ -24,7 +24,7 @@ re-exports `gametools-core` and `gametools-net`); this repository is only the cl
 
 ```bash
 ./gradlew run       # build and launch the client
-./gradlew test      # run the unit tests (111 tests, JUnit 5 style)
+./gradlew test      # run the unit tests (158 tests, JUnit 5 style)
 ./gradlew build     # compile, test, and assemble
 ```
 
@@ -33,16 +33,22 @@ adds `-XstartOnFirstThread` automatically (GLFW must own the main thread).
 
 ## Configuration
 
-Connection settings are compile-time constants at the top of
-[`src/main/kotlin/com/spartanlabs/Main.kt`](src/main/kotlin/com/spartanlabs/Main.kt):
+Connection settings live at the top of
+[`src/main/kotlin/com/spartanlabs/Main.kt`](src/main/kotlin/com/spartanlabs/Main.kt)
+and default to the production server. Override either without touching source by
+setting an environment variable — `./gradlew run` passes the environment through
+to the client:
 
-```kotlin
-private const val SERVER_HOST = "127.0.0.1"
-private const val PLAYER_NAME = "Player1"   // must not contain whitespace
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `GG_SERVER_HOST` | production server IP | Server address or hostname |
+| `GG_PLAYER_NAME` | `Player1` | Handshake name; must not contain whitespace |
+
+```bash
+GG_SERVER_HOST=127.0.0.1 ./gradlew run   # run against a local server
 ```
 
-Point `SERVER_HOST` at your server and rebuild. If the handshake fails the
-window still opens; it just shows an empty world.
+If the handshake fails the window still opens; it just shows an empty world.
 
 ## Controls
 
