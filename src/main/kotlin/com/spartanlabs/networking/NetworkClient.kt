@@ -3,11 +3,9 @@ package com.spartanlabs.networking
 import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
 import com.spartanlabs.webtools.MultiConnectionUDPServer
-import com.spartanlabs.webtools.resolveLocalAddress
 import kotlinx.serialization.json.Json
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.net.BindException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -21,17 +19,19 @@ private val log: Logger = LoggerFactory.getLogger(NetworkClient::class.java)
  * A UDP client for the GameTools [MultiConnectionUDPServer] protocol, speaking
  * the same handshake and message grammar this specific game server expects.
  *
- * Connecting is a two-phase process:
- * 1. **Handshake**: sends `Iam <name> <address>` to the server's well-known
- *    [MultiConnectionUDPServer.COMMON_LISTEN_PORT], from a socket already
- *    bound to [MultiConnectionUDPServer.COMMON_SEND_PORT] so the server's
- *    reply can be received on that same socket. The server replies with
- *    `<address> TXRXON <sendPort> <receivePort>`.
- * 2. **Dedicated channel**: `TXRXON`'s `sendPort` is the local port this
- *    client must listen on for `STATE <json>` world broadcasts and `PONG`
- *    replies; `receivePort` is the server's port outgoing commands
- *    (`PING`, `SET_DEST`, `SET_SPEED`, `STOP`) must be sent to. A second
- *    socket is opened on the assigned local port for all of this.
+ * Connecting and all subsequent traffic share a single socket:
+ * 1. **Handshake**: sends `Iam <name>` to the server's well-known
+ *    [MultiConnectionUDPServer.COMMON_LISTEN_PORT] from a socket kept open for
+ *    the lifetime of the connection. The server (GameTools 3.0.0+) replies
+ *    straight back to that datagram's UDP source with the bare token
+ *    `REGISTERED`.
+ * 2. **Shared channel**: from then on every datagram - `STATE <json>` world
+ *    broadcasts, `PONG` replies, and outgoing traffic (`PING`, and the
+ *    `COMMAND <json>` orders built by [ClientCommands]) - travels over that same
+ *    socket to/from the server's
+ *    [MultiConnectionUDPServer.COMMON_LISTEN_PORT]; there is no
+ *    per-player dedicated port pair. This client sends a bare `KA` keepalive
+ *    on an idle interval to hold its NAT mapping open, as the server expects.
  *
  * The parsing/formatting of every message on the wire is delegated to
  * [ProtocolParsing], which has no socket dependency of its own - this class
@@ -61,32 +61,24 @@ class NetworkClient(
     /** Latest parsed world-state snapshot. Written by the listener thread, read by anyone. */
     private val worldState = AtomicReference<List<DrawableSnapshot>>(emptyList())
 
-    // Bound to MultiConnectionUDPServer.COMMON_SEND_PORT; used only during
-    // the handshake to send "Iam ..." and receive the "TXRXON ..." reply.
-    private var commonSocket: DatagramSocket? = null
-
-    // Bound to the dedicated port the server assigned this connection; used
-    // for all traffic once the handshake completes.
-    private var dedicatedSocket: DatagramSocket? = null
-
-    // The server's dedicated receive port for this connection - i.e. where
-    // outgoing commands (SET_DEST, PING, ...) must be sent. Learned from the
-    // TXRXON reply; null until the handshake completes.
-    @Volatile private var serverDedicatedPort: Int? = null
+    // The single socket used for the handshake and, afterward, for every
+    // STATE/PONG/command/KA datagram to and from the server's common port.
+    private var socket: DatagramSocket? = null
 
     @Volatile private var running = false
     private var listenerThread: Thread? = null
+    private var keepaliveThread: Thread? = null
 
     /**
-     * Performs the handshake and, once it succeeds, starts a background
-     * thread that listens for world-state broadcasts on the dedicated channel.
-     * This call blocks the calling thread for up to a few seconds while it
-     * waits for the server's handshake reply.
+     * Performs the handshake and, once it succeeds, starts background threads
+     * that listen for world-state broadcasts and send periodic keepalives on
+     * the shared channel. This call blocks the calling thread for up to a few
+     * seconds while it waits for the server's handshake reply.
      * @return [Result.success] once connected and listening, or the failure
      * that prevented it (e.g. the server never replied)
      */
     fun start(): Result<Unit> =
-        handshake().flatMap { ports -> openDedicatedChannel(ports) }
+        handshake().flatMap { openSharedChannel() }
 
     /**
      * The most recently received world state, as decoded off the wire (each
@@ -95,44 +87,68 @@ class NetworkClient(
      */
     fun getWorldState(): List<DrawableSnapshot> = worldState.get()
 
-    /** Asks the server to move actor [index] toward ([x], [y]). */
-    fun setDestination(index: Int, x: Double, y: Double): Result<Unit> =
-        sendCommand("SET_DEST $index $x $y")
+    /**
+     * Asks the server to move the unit with entity id [entityId] toward
+     * ([x], [y]) (world coordinates) and settle there.
+     */
+    fun moveTo(entityId: Long, x: Double, y: Double): Result<Unit> =
+        sendCommand(ClientCommands.moveTo(entityId, x, y))
 
-    /** Asks the server to change actor [index]'s base speed. */
-    fun setSpeed(index: Int, speed: Double): Result<Unit> =
-        sendCommand("SET_SPEED $index $speed")
+    /** Asks the server to halt the unit with entity id [entityId] where it is. */
+    fun stop(entityId: Long): Result<Unit> =
+        sendCommand(ClientCommands.stop(entityId))
 
-    /** Asks the server to stop actor [index] where it currently is. */
-    fun stopActor(index: Int): Result<Unit> =
-        sendCommand("STOP $index")
+    /**
+     * Asks the server to have the unit with entity id [followerEntityId] chase
+     * the unit with entity id [targetEntityId], re-pointing at the target's
+     * position every tick (GameTools' `Follow` command). Both name objects by
+     * the stable [com.spartanlabs.gaming.gameobjects.DrawableSnapshot.id] on
+     * every `STATE` entry.
+     */
+    fun follow(followerEntityId: Long, targetEntityId: Long): Result<Unit> =
+        sendCommand(ClientCommands.follow(followerEntityId, targetEntityId))
 
-    /** Sends a `PING`; a `PONG` reply (if any) arrives asynchronously on the dedicated channel. */
+    /**
+     * Asks the server to have this client's unit [attackerId] attack unit
+     * [targetId]. Both name objects by the stable
+     * [com.spartanlabs.gaming.gameobjects.DrawableSnapshot.id] carried on every
+     * `STATE` entry - the server resolves them with `World.byId`, so the order
+     * stays bound to the unit the player meant even as the broadcast list
+     * reorders. The server issues the attack only if the attacker is one of this
+     * client's units and the target is an attackable actor it does not own; an
+     * ignored request produces no reply.
+     */
+    fun attack(attackerId: Long, targetId: Long): Result<Unit> =
+        sendCommand(ClientCommands.attack(attackerId, targetId))
+
+    /** Sends a `PING`; a `PONG` reply (if any) arrives asynchronously on the shared channel. */
     fun ping(): Result<Unit> = sendCommand("PING")
 
     /**
-     * Stops the listener thread and closes both sockets. Every step runs
-     * even if an earlier one failed, so a partial failure never leaks a
-     * bound port.
+     * Stops the listener and keepalive threads and closes the socket. Every
+     * step runs even if an earlier one failed, so a partial failure never
+     * leaks a bound port.
      * @return [Result.success] if every step succeeded, or the first failure encountered
      */
     fun stop(): Result<Unit> {
         log.info("Stopping network client")
         running = false
 
-        val listenerJoined = runCatching { listenerThread?.join(LISTENER_JOIN_TIMEOUT_MILLIS) }
+        val threadsJoined = runCatching {
+            listenerThread?.join(LISTENER_JOIN_TIMEOUT_MILLIS)
+            keepaliveThread?.join(LISTENER_JOIN_TIMEOUT_MILLIS)
+        }
             .map { }
             .onFailure { cause ->
                 if (cause is InterruptedException) Thread.currentThread().interrupt()
-                log.warn("Interrupted while waiting for the listener thread to stop")
+                log.warn("Interrupted while waiting for the background threads to stop")
             }
 
-        val socketsClosed = runCatching {
-            commonSocket?.close()
-            dedicatedSocket?.close() ?: Unit
-        }.onFailure { cause -> log.error("Could not close the network client's sockets", cause) }
+        val socketClosed = runCatching { socket?.close() }
+            .map { }
+            .onFailure { cause -> log.error("Could not close the network client's socket", cause) }
 
-        return listenerJoined.flatMap { socketsClosed }
+        return threadsJoined.flatMap { socketClosed }
     }
 
     // -----------------------------------------------------------------
@@ -141,17 +157,14 @@ class NetworkClient(
 
     /**
      * Sends the `Iam` handshake and blocks (up to [HANDSHAKE_TIMEOUT_MILLIS])
-     * for the server's `TXRXON` reply.
+     * for the server's `REGISTERED` reply.
      */
-    private fun handshake(): Result<DedicatedChannelPorts> = runCatching {
-        val localAddress = resolveLocalAddress().getOrDefault(InetAddress.getLoopbackAddress())
-        log.info("Resolved local address as {}", localAddress)
-
-        val socket = DatagramSocket(MultiConnectionUDPServer.COMMON_SEND_PORT)
+    private fun handshake(): Result<Unit> = runCatching {
+        val socket = DatagramSocket() // ephemeral local port, kept open for the whole connection
         socket.soTimeout = HANDSHAKE_TIMEOUT_MILLIS.toInt()
-        commonSocket = socket
+        this.socket = socket
 
-        val handshakeMessage = ProtocolParsing.buildHandshakeMessage(playerName, localAddress.hostAddress)
+        val handshakeMessage = ProtocolParsing.buildHandshakeMessage(playerName)
         log.debug("Sending handshake: {}", handshakeMessage)
         val payload = handshakeMessage.toByteArray(Charsets.UTF_8)
         socket.send(
@@ -168,56 +181,53 @@ class NetworkClient(
         val text = String(reply.data, reply.offset, reply.length, Charsets.UTF_8).trim()
         log.debug("Received handshake reply: {}", text)
 
-        ProtocolParsing.parseTxrxonReply(text).getOrThrow()
+        ProtocolParsing.parseRegisteredReply(text).getOrThrow()
     }
-        .onSuccess { ports -> log.info("Handshake complete: {}", ports) }
+        .onSuccess { log.info("Handshake complete") }
         .onFailure { cause ->
-            // Release COMMON_SEND_PORT now instead of holding it (idle, on a
-            // dead client) until stop() - otherwise the next launch, or a
-            // retry, fails to bind it.
-            commonSocket?.close()
-            commonSocket = null
-
-            if (cause is BindException) {
-                log.error(
-                    "UDP port {} is already in use - another game client is probably still running (close it with Escape, or kill the process)",
-                    MultiConnectionUDPServer.COMMON_SEND_PORT, cause
-                )
-            } else {
-                log.error("Handshake with {} failed", serverHost, cause)
-            }
+            // Release the handshake socket now instead of holding it (idle, on a
+            // dead client) until stop().
+            socket?.close()
+            socket = null
+            log.error("Handshake with {} failed", serverHost, cause)
         }
 
-    /** Opens the dedicated channel and starts the background listener thread. */
-    private fun openDedicatedChannel(ports: DedicatedChannelPorts): Result<Unit> = runCatching {
-        val socket = DatagramSocket(ports.localListenPort)
-        socket.soTimeout = LISTENER_WAKE_INTERVAL_MILLIS.toInt()
-        dedicatedSocket = socket
-        serverDedicatedPort = ports.serverCommandPort
+    /** Starts the background listener and keepalive threads on the shared channel. */
+    private fun openSharedChannel(): Result<Unit> = runCatching {
+        requireNotNull(socket) { "Handshake did not open a socket" }
+            .soTimeout = LISTENER_WAKE_INTERVAL_MILLIS.toInt()
         running = true
 
-        listenerThread = Thread(::receiveLoop, "udp-dedicated-listener").apply {
+        listenerThread = Thread(::receiveLoop, "udp-shared-listener").apply {
+            isDaemon = true
+            start()
+        }
+        keepaliveThread = Thread(::keepaliveLoop, "udp-keepalive").apply {
             isDaemon = true
             start()
         }
     }.onFailure { cause ->
         running = false
-        dedicatedSocket?.close()
-        dedicatedSocket = null
-        log.error("Could not open the dedicated channel on port {}", ports.localListenPort, cause)
+        socket?.close()
+        socket = null
+        log.error("Could not start listening on the shared channel", cause)
     }
 
     // -----------------------------------------------------------------
-    // Dedicated channel: send + receive
+    // Shared channel: send + receive
     // -----------------------------------------------------------------
 
-    /** Sends a raw text command to the server on the dedicated channel. */
+    /** Sends a raw text command to the server on the shared channel. */
     private fun sendCommand(command: String): Result<Unit> = runCatching {
-        val port = requireNotNull(serverDedicatedPort) { "Not connected yet - call start() and check its Result first" }
-        val socket = requireNotNull(dedicatedSocket) { "Not connected yet - call start() and check its Result first" }
+        val socket = requireNotNull(socket) { "Not connected yet - call start() and check its Result first" }
         log.trace("Sending command: {}", command)
         val payload = command.toByteArray(Charsets.UTF_8)
-        socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(serverHost), port))
+        socket.send(
+            DatagramPacket(
+                payload, payload.size,
+                InetAddress.getByName(serverHost), MultiConnectionUDPServer.COMMON_LISTEN_PORT
+            )
+        )
     }.onFailure { cause -> log.error("Could not send command '{}'", command, cause) }
 
     private fun receiveLoop() {
@@ -225,7 +235,7 @@ class NetworkClient(
         while (running) {
             val packet = DatagramPacket(buffer, buffer.size)
             try {
-                dedicatedSocket?.receive(packet)
+                socket?.receive(packet)
             } catch (_: SocketTimeoutException) {
                 continue // just a wakeup to re-check `running`
             } catch (e: Exception) {
@@ -234,11 +244,19 @@ class NetworkClient(
             }
 
             val text = String(packet.data, packet.offset, packet.length, Charsets.UTF_8).trim()
-            handleDedicatedMessage(text)
+            handleSharedChannelMessage(text)
         }
     }
 
-    private fun handleDedicatedMessage(text: String) {
+    /** Sends a `KA` keepalive on [KEEPALIVE_INTERVAL_MILLIS], to hold the NAT mapping open. */
+    private fun keepaliveLoop() {
+        while (running) {
+            Thread.sleep(KEEPALIVE_INTERVAL_MILLIS)
+            if (running) sendCommand(ProtocolParsing.KEEPALIVE_MESSAGE)
+        }
+    }
+
+    private fun handleSharedChannelMessage(text: String) {
         val (verb, payload) = ProtocolParsing.splitVerbAndPayload(text)
 
         when (verb) {
@@ -258,6 +276,9 @@ class NetworkClient(
         const val HANDSHAKE_TIMEOUT_MILLIS = 5000L
         const val LISTENER_WAKE_INTERVAL_MILLIS = 1000L
         const val LISTENER_JOIN_TIMEOUT_MILLIS = 1500L
+
+        /** Server recommends ~20s; kept comfortably under that. */
+        const val KEEPALIVE_INTERVAL_MILLIS = 15_000L
     }
 }
 

@@ -1,18 +1,9 @@
 package com.spartanlabs.networking
 
 /**
- * The dedicated per-connection ports learned from the server's `TXRXON`
- * handshake reply.
- * @property localListenPort the local port this client must listen on for
- * `STATE`/`PONG` traffic
- * @property serverCommandPort the server's port outgoing commands must be sent to
- */
-internal data class DedicatedChannelPorts(val localListenPort: Int, val serverCommandPort: Int)
-
-/**
  * Pure parsing and formatting for the GameTools UDP wire protocol - the
- * `Iam`/`TXRXON` handshake grammar and the verb-prefixed message framing
- * (`STATE ...`, `PONG`, etc.) used on the dedicated channel afterward.
+ * `Iam`/`REGISTERED` handshake grammar and the verb-prefixed message framing
+ * (`STATE ...`, `PONG`, etc.) used on the shared common channel afterward.
  *
  * Deliberately has no socket, thread, or [com.spartanlabs.networking.NetworkClient] dependency: every
  * function here takes plain strings in and returns plain values or [Result],
@@ -20,35 +11,37 @@ internal data class DedicatedChannelPorts(val localListenPort: Int, val serverCo
  */
 internal object ProtocolParsing {
 
-    /** The verb a handshake reply must start with, after the echoed address token. */
-    const val TXRXON_VERB = "TXRXON"
+    /** The bare token the server replies with once a handshake is accepted. */
+    const val REGISTERED_VERB = "REGISTERED"
 
-    /** The verb that opens a world-state broadcast on the dedicated channel. */
+    /** The verb that opens a world-state broadcast on the common channel. */
     const val STATE_VERB = "STATE"
 
     /** The verb the server replies with to a `PING`. */
     const val PONG_VERB = "PONG"
 
-    /**
-     * Builds the `Iam <name> <address>` handshake message this client sends
-     * to open a connection, in the `/<ip>` form the server's parser expects.
-     * @param playerName this client's chosen name; must not contain whitespace
-     * @param localAddressHost this client's own reachable IP address (no leading slash)
-     */
-    fun buildHandshakeMessage(playerName: String, localAddressHost: String): String =
-        "Iam $playerName /$localAddressHost"
+    /** The keepalive token sent on an idle interval to hold the NAT mapping open. */
+    const val KEEPALIVE_MESSAGE = "KA"
 
     /**
-     * Parses a handshake reply of the form `<address> TXRXON <sendPort> <receivePort>`.
-     * @return the parsed [DedicatedChannelPorts], or [Result.failure] if the
-     * reply is malformed (wrong verb, too few tokens, or non-numeric ports)
+     * Builds the `Iam <name>` handshake message this client sends to open a
+     * connection. The server replies to the datagram's UDP source, so the
+     * client no longer tells it an address (a trailing address token is still
+     * accepted but ignored by the server, as of GameTools 2.0.0).
+     * @param playerName this client's chosen name; must not contain whitespace
      */
-    fun parseTxrxonReply(text: String): Result<DedicatedChannelPorts> = runCatching {
-        val tokens = text.trim().split(' ')
-        require(tokens.size >= 4 && tokens[1] == TXRXON_VERB) {
-            "Expected '<address> $TXRXON_VERB <sendPort> <receivePort>' but got: $text"
+    fun buildHandshakeMessage(playerName: String): String =
+        "Iam $playerName"
+
+    /**
+     * Validates a handshake reply is the bare `REGISTERED` token.
+     * @return [Result.success] if the reply is `REGISTERED` (surrounding
+     * whitespace tolerated), or [Result.failure] if it is anything else
+     */
+    fun parseRegisteredReply(text: String): Result<Unit> = runCatching {
+        require(text.trim() == REGISTERED_VERB) {
+            "Expected '$REGISTERED_VERB' but got: $text"
         }
-        DedicatedChannelPorts(localListenPort = tokens[2].toInt(), serverCommandPort = tokens[3].toInt())
     }
 
     /**

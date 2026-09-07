@@ -1,6 +1,8 @@
 package com.spartanlabs.graphics.ui
 
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.gaming.networking.MouseAction
+import com.spartanlabs.gaming.networking.MouseActionType
 import com.spartanlabs.geometry.Dimensions
 import com.spartanlabs.geometry.Point
 import com.spartanlabs.geometry.Square
@@ -12,23 +14,14 @@ typealias Stage = HashMap<String, Scene>
 typealias Scene = ArrayList<Element>
 
 /**
- * A Red-Green-Blue-Alpha color, each channel `0..255`.
- *
- * The renderer works in `0f..1f` floats, so [normalized] does that conversion
- * once per draw rather than every call site doing it by hand.
+ * This colour moved [fraction] (`0.0..1.0`) of the way toward white, with its
+ * alpha left untouched - the lighter tint a [Button] paints while the cursor is
+ * over it. An extension because [Color] itself now comes from GeneralTools.
  */
-data class Color(val red: Int, val green: Int, val blue: Int, val alpha: Int = 255) {
-
-    /** `[r, g, b, a]` with every channel mapped from `0..255` to `0f..1f`. */
-    fun normalized(): FloatArray =
-        floatArrayOf(red / 255f, green / 255f, blue / 255f, alpha / 255f)
-
-    companion object {
-        val WHITE = Color(255, 255, 255)
-        val BLACK = Color(0, 0, 0)
-        /** Fully transparent - a panel/label with no visible background of its own. */
-        val TRANSPARENT = Color(0, 0, 0, 0)
-    }
+fun Color.lightened(fraction: Double = 0.35): Color {
+    val f = fraction.coerceIn(0.0, 1.0)
+    fun towardWhite(channel: Int) = (channel + (255 - channel) * f).toInt().coerceIn(0, 255)
+    return Color(towardWhite(red), towardWhite(green), towardWhite(blue), alpha)
 }
 
 /**
@@ -63,6 +56,48 @@ sealed class Element(
      * react to the event; the default does nothing.
      */
     open fun onMouseAction(action: MouseAction) {}
+
+    /**
+     * Called on every mouse-move event with whether the cursor is now over
+     * this element - `true` while it is the front-most element under the
+     * cursor, `false` the moment it is not (or something opaque covers it).
+     * Unlike [onMouseAction] an element is told when the cursor *leaves*, so a
+     * [Button] can drop its highlight. The default does nothing.
+     */
+    open fun onHover(hovering: Boolean) {}
+
+    /**
+     * Called for every key press/release while this element's [Scene] is
+     * shown - keys are not tied to a screen position, so every element in the
+     * scene sees every key event (see [Scene.dispatchKey]). Override to react;
+     * the default does nothing.
+     */
+    open fun onKeyAction(action: KeyAction) {}
+}
+
+/** Where a [TextElement]'s text sits within the element's box. */
+enum class TextAlignment {
+    /** Text starts at the top-left corner (inset by a small padding). The default for a [Label]. */
+    TOP_LEFT,
+
+    /** Text is centred horizontally and vertically in the box. The default for a [Button]. */
+    CENTER
+}
+
+/**
+ * An [Element] that draws a line of text over its own quad. [Label] and
+ * [Button] implement it; the renderer draws [displayText] in [displayTextColor]
+ * for any element that does, so text handling is not special-cased per class.
+ */
+interface TextElement {
+    /** The line of text to draw this frame, or empty for none. */
+    val displayText: String
+
+    /** The colour that text is drawn in. */
+    val displayTextColor: Color
+
+    /** How [displayText] is placed within the element's box; [TextAlignment.TOP_LEFT] unless overridden. */
+    val displayTextAlignment: TextAlignment get() = TextAlignment.TOP_LEFT
 }
 
 /**
@@ -91,7 +126,7 @@ class Label(
     override val texture: String? = null,
     val textColor: Color = Color.WHITE,
     private val textSource: () -> String
-) : Element(position, color, texture) {
+) : Element(position, color, texture), TextElement {
 
     constructor(
         position: Square = originSquare(),
@@ -103,6 +138,9 @@ class Label(
 
     /** The line of text to draw this frame. */
     val text: String get() = textSource()
+
+    override val displayText: String get() = text
+    override val displayTextColor: Color get() = textColor
 }
 
 /**
@@ -244,6 +282,8 @@ fun Scene.flatten(windowWidth: Int, windowHeight: Int): List<PositionedElement> 
 fun Scene.dispatchMouse(action: MouseAction, windowWidth: Int, windowHeight: Int): Boolean {
     val positioned = flatten(windowWidth, windowHeight)
 
+    if (action.type == MouseActionType.MOVE) updateHover(positioned, action.x, action.y)
+
     for (index in positioned.indices.reversed()) {
         val candidate = positioned[index]
         if (candidate.element is Viewport) continue // handled as the backstop below
@@ -259,6 +299,38 @@ fun Scene.dispatchMouse(action: MouseAction, windowWidth: Int, windowHeight: Int
 }
 
 /**
+ * Tells every element whether the cursor at ([x], [y]) is now over it. Walks
+ * front-to-back like [dispatchMouse] and honours opacity: the first element
+ * the point lands in is hovered, everything behind it (and every element the
+ * point misses) is told it is not. A [Viewport] is skipped - it is the
+ * always-present backdrop, not something that "highlights".
+ */
+private fun updateHover(positioned: List<PositionedElement>, x: Double, y: Double) {
+    var covered = false
+    for (index in positioned.indices.reversed()) {
+        val candidate = positioned[index]
+        if (candidate.element is Viewport) continue
+        val over = !covered && candidate.contains(x, y)
+        candidate.element.onHover(over)
+        if (over) covered = true
+    }
+}
+
+/**
+ * Broadcasts a key [action] to every element in the scene, containers and
+ * their children alike. Keys carry no screen position, so there is no
+ * hit-testing and no "consuming" - a [Button] simply ignores any [KeyAction]
+ * whose [KeyAction.key] is not the one assigned to it.
+ */
+fun Scene.dispatchKey(action: KeyAction) {
+    fun visit(element: Element) {
+        element.onKeyAction(action)
+        if (element is Container) element.children.forEach(::visit)
+    }
+    forEach(::visit)
+}
+
+/**
  * Builds a screen-relative [Element] rectangle: [x]/[y] is the top-left
  * corner and [width]/[height] the size, all as fractions of the window in
  * `0.0..1.0` (`(0, 0, 1, 1)` covers the whole window). See [Element.position].
@@ -266,4 +338,4 @@ fun Scene.dispatchMouse(action: MouseAction, windowWidth: Int, windowHeight: Int
 fun screenRect(x: Double, y: Double, width: Double, height: Double): Square =
     Square(Point(x, y), Dimensions(width, height))
 
-private fun originSquare() = Square(Point(0.0, 0.0), Dimensions(0.0, 0.0))
+internal fun originSquare() = Square(Point(0.0, 0.0), Dimensions(0.0, 0.0))

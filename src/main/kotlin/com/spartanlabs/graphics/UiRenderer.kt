@@ -1,14 +1,16 @@
 package com.spartanlabs.graphics
 
-import com.spartanlabs.graphics.ui.Color
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.graphics.ui.Element
-import com.spartanlabs.graphics.ui.Label
 import com.spartanlabs.graphics.ui.PositionedElement
 import com.spartanlabs.graphics.ui.Scene
+import com.spartanlabs.graphics.ui.TextAlignment
+import com.spartanlabs.graphics.ui.TextElement
 import com.spartanlabs.graphics.ui.flatten
 import com.spartanlabs.networking.NdcConverter
 import org.lwjgl.opengl.GL33.*
 import org.lwjgl.stb.STBEasyFont.stb_easy_font_print
+import org.lwjgl.stb.STBEasyFont.stb_easy_font_width
 import org.lwjgl.system.MemoryUtil
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -26,7 +28,8 @@ private val uiLog: Logger = LoggerFactory.getLogger(UiRenderer::class.java)
  *
  * - a **quad shader** that fills each element with its [Color], optionally
  *   multiplied by a texture (so a texture tints toward its element's colour);
- * - a **text shader** plus [org.lwjgl.stb.STBEasyFont] for [Label] glyphs,
+ * - a **text shader** plus [org.lwjgl.stb.STBEasyFont] for the glyphs of any
+ *   [com.spartanlabs.graphics.ui.TextElement] (a label, a button caption),
  *   which needs no font file or glyph atlas - the geometry is generated on
  *   the CPU each frame.
  *
@@ -42,7 +45,7 @@ internal class UiRenderer {
     private var quadEbo = 0
     private var quadShader = 0
 
-    // Text pipeline (Label glyphs)
+    // Text pipeline (TextElement glyphs)
     private var textVao = 0
     private var textVbo = 0
     private var textShader = 0
@@ -133,8 +136,11 @@ internal class UiRenderer {
         for (positioned in scene.flatten(windowWidth, windowHeight)) {
             drawElementQuad(positioned, windowWidth, windowHeight)
             val element = positioned.element
-            if (element is Label && element.text.isNotEmpty()) {
-                drawLabelText(element, positioned, windowWidth, windowHeight)
+            if (element is TextElement && element.displayText.isNotEmpty()) {
+                drawText(
+                    element.displayText, element.displayTextColor, element.displayTextAlignment,
+                    positioned, windowWidth, windowHeight
+                )
             }
         }
     }
@@ -196,11 +202,13 @@ internal class UiRenderer {
     }
 
     // ---------------------------------------------------------------
-    // Label text (STBEasyFont)
+    // Element text (STBEasyFont)
     // ---------------------------------------------------------------
 
-    private fun drawLabelText(
-        label: Label,
+    private fun drawText(
+        text: String,
+        textColor: Color,
+        alignment: TextAlignment,
         positioned: PositionedElement,
         windowWidth: Int,
         windowHeight: Int
@@ -208,18 +216,19 @@ internal class UiRenderer {
         val buffer = glyphQuads ?: return
         buffer.clear()
 
-        val quadCount = stb_easy_font_print(0f, 0f, label.text, null, buffer)
+        val quadCount = stb_easy_font_print(0f, 0f, text, null, buffer)
         if (quadCount <= 0) return
 
+        val (originXPx, originYPx) = textOrigin(text, alignment, positioned)
         val triangles = glyphTrianglesToNdc(
             buffer, quadCount,
-            originXPx = positioned.x + TEXT_PADDING_PX,
-            originYPx = positioned.y + TEXT_PADDING_PX,
+            originXPx = originXPx,
+            originYPx = originYPx,
             windowWidth, windowHeight
         )
 
         glUseProgram(textShader)
-        val (r, g, b, a) = label.textColor.normalized()
+        val (r, g, b, a) = textColor.normalized()
         glUniform4f(glGetUniformLocation(textShader, "uColor"), r, g, b, a)
 
         glBindVertexArray(textVao)
@@ -227,6 +236,31 @@ internal class UiRenderer {
         glBufferData(GL_ARRAY_BUFFER, triangles, GL_DYNAMIC_DRAW)
         glDrawArrays(GL_TRIANGLES, 0, triangles.size / 2)
         glBindVertexArray(0)
+    }
+
+    /**
+     * The top-left screen pixel STBEasyFont should print [text] from so it lands
+     * per [alignment] inside [positioned]'s box:
+     *
+     * - [TextAlignment.TOP_LEFT]: the box's top-left corner, inset by [TEXT_PADDING_PX].
+     * - [TextAlignment.CENTER]: centred both ways, using STBEasyFont's own width
+     *   for [text] and [GLYPH_HEIGHT_PX] for the (single-line) glyph height, both
+     *   taken up to screen pixels by [TEXT_SCALE].
+     */
+    private fun textOrigin(
+        text: String,
+        alignment: TextAlignment,
+        positioned: PositionedElement
+    ): Pair<Double, Double> = when (alignment) {
+        TextAlignment.TOP_LEFT ->
+            (positioned.x + TEXT_PADDING_PX) to (positioned.y + TEXT_PADDING_PX)
+
+        TextAlignment.CENTER -> {
+            val textWidthPx = stb_easy_font_width(text) * TEXT_SCALE
+            val textHeightPx = GLYPH_HEIGHT_PX * TEXT_SCALE
+            (positioned.x + (positioned.width - textWidthPx) / 2.0) to
+                (positioned.y + (positioned.height - textHeightPx) / 2.0)
+        }
     }
 
     /**
@@ -311,7 +345,7 @@ internal class UiRenderer {
 
         glBindVertexArray(textVao)
         glBindBuffer(GL_ARRAY_BUFFER, textVbo)
-        // No glBufferData yet - drawLabelText() re-specs it every frame.
+        // No glBufferData yet - drawText() re-specs it every frame.
         glVertexAttribPointer(0, 2, GL_FLOAT, false, 2 * java.lang.Float.BYTES, 0L)
         glEnableVertexAttribArray(0)
         glBindBuffer(GL_ARRAY_BUFFER, 0)
@@ -324,6 +358,14 @@ internal class UiRenderer {
 
         /** Inset of a label's text from its top-left corner, in screen pixels. */
         const val TEXT_PADDING_PX = 4.0
+
+        /**
+         * A single line of STBEasyFont glyphs is about this tall in font pixels
+         * (a capital letter's extent). Used to centre text vertically -
+         * `stb_easy_font_height` reports the ~12px line box, which sits the text
+         * visibly high.
+         */
+        const val GLYPH_HEIGHT_PX = 7.0
 
         const val BYTES_PER_GLYPH_VERTEX = 16
         const val BYTES_PER_QUAD = BYTES_PER_GLYPH_VERTEX * 4

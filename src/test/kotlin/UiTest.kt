@@ -3,11 +3,18 @@ import com.spartanlabs.gaming.networking.MouseActionType
 import com.spartanlabs.geometry.Dimensions
 import com.spartanlabs.geometry.Point
 import com.spartanlabs.geometry.Square
-import com.spartanlabs.graphics.ui.Color
+import com.spartanlabs.generaltools.Color
+import com.spartanlabs.graphics.ui.Button
+import com.spartanlabs.graphics.ui.ButtonState
+import com.spartanlabs.graphics.ui.KeyAction
+import com.spartanlabs.graphics.ui.KeyActionType
 import com.spartanlabs.graphics.ui.Label
+import com.spartanlabs.graphics.ui.lightened
 import com.spartanlabs.graphics.ui.Panel
 import com.spartanlabs.graphics.ui.Scene
+import com.spartanlabs.graphics.ui.TextAlignment
 import com.spartanlabs.graphics.ui.Viewport
+import com.spartanlabs.graphics.ui.dispatchKey
 import com.spartanlabs.graphics.ui.dispatchMouse
 import com.spartanlabs.graphics.ui.flatten
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -47,6 +54,14 @@ class UiTest {
         fun `alpha defaults to fully opaque`() {
             assertEquals(1.0f, Color(10, 20, 30).normalized()[3], EPSILON)
         }
+
+        @Test
+        fun `lightened moves each channel toward white and leaves alpha alone`() {
+            val lit = Color(100, 100, 100, 128).lightened(fraction = 0.5)
+
+            // 100 + (255 - 100) * 0.5 = 177.5 -> 177
+            assertEquals(Color(177, 177, 177, 128), lit)
+        }
     }
 
     @Nested
@@ -66,6 +81,11 @@ class UiTest {
             assertEquals("count 0", label.text)
             n = 42
             assertEquals("count 42", label.text)
+        }
+
+        @Test
+        fun `text is top-left aligned`() {
+            assertEquals(TextAlignment.TOP_LEFT, Label(text = "hello").displayTextAlignment)
         }
     }
 
@@ -233,6 +253,71 @@ class UiTest {
             scene.dispatchMouse(press(x = 150.0, y = 120.0), W, H) // over the child label
 
             assertNull(game.pickedAt)
+        }
+    }
+
+    @Nested
+    @DisplayName("Scene.dispatchMouse() hover")
+    inner class HoverDispatchTests {
+
+        private fun move(x: Double, y: Double) = MouseAction(MouseActionType.MOVE, -1, x, y)
+
+        // A button over the top-left quarter: fraction (0,0,0.25,0.25) -> px (0,0)-(200,150).
+        private fun topLeftButton() =
+            Button("btn", RecordingButtonListener(), position = square(0.0, 0.0, 0.25, 0.25))
+
+        @Test
+        fun `a move onto a button highlights it, a move away clears the highlight`() {
+            val button = topLeftButton()
+            val scene = Scene().apply { add(newViewport(FakeGameView())); add(button) }
+
+            scene.dispatchMouse(move(x = 50.0, y = 50.0), W, H)
+            assertTrue(button.hovered)
+
+            scene.dispatchMouse(move(x = 500.0, y = 400.0), W, H)
+            assertFalse(button.hovered)
+        }
+
+        @Test
+        fun `a button covered by an opaque panel never highlights`() {
+            val button = topLeftButton()
+            val scene = Scene().apply {
+                add(button)
+                add(Panel(position = square(0.0, 0.0, 0.25, 0.25))) // same box, drawn in front
+            }
+
+            scene.dispatchMouse(move(x = 50.0, y = 50.0), W, H)
+
+            assertFalse(button.hovered)
+        }
+    }
+
+    @Nested
+    @DisplayName("Scene.dispatchKey()")
+    inner class KeyDispatchTests {
+
+        private fun pressKey(key: Int) = KeyAction(KeyActionType.PRESS, key)
+
+        @Test
+        fun `every element in the scene is offered the key, and each button filters by its own key`() {
+            val b1 = Button("one", RecordingButtonListener(), key = 65)
+            val b2 = Button("two", RecordingButtonListener(), key = 66)
+            val scene = Scene().apply { add(b1); add(b2) }
+
+            scene.dispatchKey(pressKey(65))
+
+            assertEquals(ButtonState.ACTIVE, b1.state)
+            assertEquals(ButtonState.IDLE, b2.state)
+        }
+
+        @Test
+        fun `a key reaches a button nested inside a panel`() {
+            val nested = Button("nested", RecordingButtonListener(), key = 65)
+            val scene = Scene().apply { add(Panel(children = listOf(nested))) }
+
+            scene.dispatchKey(pressKey(65))
+
+            assertEquals(ButtonState.ACTIVE, nested.state)
         }
     }
 

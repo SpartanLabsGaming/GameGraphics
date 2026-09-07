@@ -1,6 +1,6 @@
 import com.spartanlabs.gaming.gameobjects.ColorSnapshot
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
-import com.spartanlabs.graphics.ui.Color
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.graphics.ui.Portrait
 import com.spartanlabs.graphics.ui.screenRect
 import org.junit.jupiter.api.Assertions.assertEquals
