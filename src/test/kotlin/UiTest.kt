@@ -3,12 +3,13 @@ import com.spartanlabs.gaming.networking.MouseActionType
 import com.spartanlabs.geometry.Dimensions
 import com.spartanlabs.geometry.Point
 import com.spartanlabs.geometry.Square
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.graphics.ui.Button
 import com.spartanlabs.graphics.ui.ButtonState
-import com.spartanlabs.graphics.ui.Color
 import com.spartanlabs.graphics.ui.KeyAction
 import com.spartanlabs.graphics.ui.KeyActionType
 import com.spartanlabs.graphics.ui.Label
+import com.spartanlabs.graphics.ui.lightened
 import com.spartanlabs.graphics.ui.Panel
 import com.spartanlabs.graphics.ui.Scene
 import com.spartanlabs.graphics.ui.TextAlignment

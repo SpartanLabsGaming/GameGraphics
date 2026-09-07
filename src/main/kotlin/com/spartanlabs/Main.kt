@@ -8,7 +8,7 @@ import com.spartanlabs.geometry.Square
 import com.spartanlabs.graphics.Window
 import com.spartanlabs.graphics.ui.Button
 import com.spartanlabs.graphics.ui.ButtonListener
-import com.spartanlabs.graphics.ui.Color
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.graphics.ui.GameView
 import com.spartanlabs.graphics.ui.Label
 import com.spartanlabs.graphics.ui.Panel
@@ -19,6 +19,8 @@ import com.spartanlabs.graphics.ui.StatBar
 import com.spartanlabs.graphics.ui.Viewport
 import com.spartanlabs.graphics.ui.screenRect
 import com.spartanlabs.networking.NetworkClient
+import com.spartanlabs.networking.attackTarget
+import com.spartanlabs.networking.byEntityId
 import com.spartanlabs.networking.drawableCore
 import org.lwjgl.glfw.GLFW.GLFW_KEY_B
 import org.lwjgl.glfw.GLFW.glfwGetTime
@@ -82,6 +84,10 @@ fun main() {
         window.showScene(MENU_SCENE)
             .onFailure { cause -> log.warn("Could not show the menu scene: {}", cause.message) }
 
+        // Let the window draw an in-world outline around whatever the viewport
+        // has selected (resolved by entity id against each frame's state).
+        window.onSelection { viewport.selectedEntityId }
+
         client.start()
             .onSuccess { log.info("Connected to {} as '{}'", SERVER_HOST, PLAYER_NAME) }
             .onFailure { cause -> log.error("Could not connect to {}: {}", SERVER_HOST, cause.message) }
@@ -94,6 +100,31 @@ fun main() {
         window.close().onFailure { cause -> log.warn("Window did not close cleanly: {}", cause.message) }
     }
 }
+private fun runLoop(window: Window, client: NetworkClient) {
+    var previousTime = glfwGetTime()
+    var accumulator = 0.0
+
+    while (!window.shouldClose()) {
+        val currentTime = glfwGetTime()
+        var frameTime = currentTime - previousTime
+        previousTime = currentTime
+
+        // Avoid a huge catch-up burst if the loop stalls (e.g. window drag)
+        if (frameTime > 0.25) frameTime = 0.25
+        accumulator += frameTime
+
+        window.pollEvents()
+
+        // Fixed 60Hz tick, reserved for future client-side logic
+        // (input handling, interpolation, prediction, etc).
+        while (accumulator >= UPDATE_INTERVAL) {
+            accumulator -= UPDATE_INTERVAL
+        }
+
+        window.render(client.getWorldState())
+    }
+}
+
 
 /**
  * The [Window]- and [NetworkClient]-backed bridge the game [Viewport] drives.
@@ -102,28 +133,33 @@ fun main() {
  */
 private fun gameView(client: NetworkClient, window: Window, sounds: SoundPlayer): GameView = object : GameView {
 
-    override fun pickActor(xPx: Double, yPx: Double): Int? = window.pick(xPx, yPx)
+    override fun pickActor(xPx: Double, yPx: Double): Long? = window.pick(xPx, yPx)
 
-    override fun moveActor(actorIndex: Int, xPx: Double, yPx: Double) {
+    override fun moveActor(entityId: Long, xPx: Double, yPx: Double) {
+        // The order names the unit by its stable id, so there is nothing to
+        // translate - but if the unit is already gone from the newest state,
+        // skip the order (and its sound) rather than name a unit the server
+        // will just fail to resolve.
+        if (client.getWorldState().byEntityId(entityId) == null) {
+            log.debug("Move order dropped - selected unit {} is no longer in the world state", entityId)
+            return
+        }
         val (worldX, worldY) = window.screenToWorld(xPx, yPx)
         sounds.play(MOVE_COMMAND_SOUND)
-        client.setDestination(actorIndex, worldX, worldY)
-            .onFailure { cause -> log.warn("Could not move actor {}: {}", actorIndex, cause.message) }
+        client.moveTo(entityId, worldX, worldY)
+            .onFailure { cause -> log.warn("Could not move unit {}: {}", entityId, cause.message) }
     }
 
-    override fun attack(attackerIndex: Int, xPx: Double, yPx: Double): Boolean {
-        val targetIndex = window.pick(xPx, yPx) ?: return false
-        if (targetIndex == attackerIndex) return false
-        // Only an Alive can be attacked; the target's ownerName is what tells an
-        // enemy unit from one of this client's own (which we treat as a move, not
-        // an attack). The picked index resolves against the same list getWorldState
-        // returns - see Window.pick / Window.render.
-        val target = client.getWorldState().getOrNull(targetIndex) as? AliveSnapshot ?: return false
-        if (target.ownerName == PLAYER_NAME) return false
+    override fun attack(attackerEntityId: Long, xPx: Double, yPx: Double): Boolean {
+        val targetId = window.pick(xPx, yPx) ?: return false
+        // Client-side eligibility pre-check against one state read: don't send an
+        // attack the server would only reject (the attacker itself, terrain, one
+        // of our own units, a stale id). The server re-checks ownership anyway.
+        if (client.getWorldState().attackTarget(attackerEntityId, targetId, PLAYER_NAME) == null) return false
 
         sounds.play(ATTACK_COMMAND_SOUND)
-        client.attack(attackerIndex, targetIndex)
-            .onFailure { cause -> log.warn("Could not attack actor {}: {}", targetIndex, cause.message) }
+        client.attack(attackerEntityId, targetId)
+            .onFailure { cause -> log.warn("Could not attack unit {}: {}", targetId, cause.message) }
         return true
     }
 
@@ -159,12 +195,12 @@ private fun buildStage(
     // header label; `selectedAlive` is non-null only when that object is an
     // Alive, which is what gates the health bar and fills the stats panel.
     val selectedRaw: () -> DrawableSnapshot? = {
-        viewport.selectedActor?.let { client.getWorldState().getOrNull(it) }
+        viewport.selectedEntityId?.let { client.getWorldState().byEntityId(it) }
     }
     val selected: () -> VisibleObjectSnapshot? = { selectedRaw()?.drawableCore() }
     val selectedAlive: () -> AliveSnapshot? = { selectedRaw() as? AliveSnapshot }
 
-    val info = bottomInfoPanel(selected, selectedAlive, sounds, windowWidth, windowHeight) { viewport.selectedActor }
+    val info = bottomInfoPanel(selected, selectedAlive, sounds, windowWidth, windowHeight) { viewport.selectedEntityId }
 
     // A demo Button: highlights on hover, turns green while held (by the mouse
     // or by its assigned "B" key), and beeps on every activation.
@@ -350,7 +386,7 @@ private fun statsPanel(alive: () -> AliveSnapshot?): Panel {
  * left, then a narrow column with the selection header, a [StatBar] "healthbar"
  * (shown only while an [AliveSnapshot] is selected) and two square action
  * [Button]s, then a [statsPanel] filling the rest. Every child re-reads
- * [selected] / [selectedAlive] / [selectedIndex] each frame, so the panel
+ * [selected] / [selectedAlive] / [selectedEntityId] each frame, so the panel
  * updates the instant a new object is clicked and tracks it as it moves.
  */
 private fun bottomInfoPanel(
@@ -359,7 +395,7 @@ private fun bottomInfoPanel(
     sounds: SoundPlayer,
     windowWidth: Int,
     windowHeight: Int,
-    selectedIndex: () -> Int?
+    selectedEntityId: () -> Long?
 ): Panel = Panel(
     position = INFO_PANEL_RECT,
     color = Color(15, 18, 30, 235),
@@ -372,7 +408,7 @@ private fun bottomInfoPanel(
         Label(
             position = screenRect(x = 0.17, y = 0.04, width = 0.30, height = 0.20),
             textColor = LABEL_COLOR,
-            textSource = { selectedIndex()?.let { "Actor #$it" } ?: "Nothing selected" }
+            textSource = { selectedEntityId()?.let { "Unit #$it" } ?: "Nothing selected" }
         ),
         StatBar(
             position = healthBarRect(INFO_PANEL_RECT, windowWidth, windowHeight),
@@ -399,28 +435,3 @@ private fun fmt(value: Double): String = "%.0f".format(value)
 
 /** A two-decimal readout of [value] - the small stats like attack time and evasion. */
 private fun dec(value: Double): String = "%.2f".format(value)
-
-private fun runLoop(window: Window, client: NetworkClient) {
-    var previousTime = glfwGetTime()
-    var accumulator = 0.0
-
-    while (!window.shouldClose()) {
-        val currentTime = glfwGetTime()
-        var frameTime = currentTime - previousTime
-        previousTime = currentTime
-
-        // Avoid a huge catch-up burst if the loop stalls (e.g. window drag)
-        if (frameTime > 0.25) frameTime = 0.25
-        accumulator += frameTime
-
-        window.pollEvents()
-
-        // Fixed 60Hz tick, reserved for future client-side logic
-        // (input handling, interpolation, prediction, etc).
-        while (accumulator >= UPDATE_INTERVAL) {
-            accumulator -= UPDATE_INTERVAL
-        }
-
-        window.render(client.getWorldState())
-    }
-}

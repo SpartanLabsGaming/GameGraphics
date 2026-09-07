@@ -19,51 +19,34 @@ class ProtocolParsingTest {
     inner class BuildHandshakeMessageTests {
 
         @Test
-        fun `formats the name and address with a leading slash`() {
-            val message = ProtocolParsing.buildHandshakeMessage("Player1", "192.168.1.5")
+        fun `formats the name after the Iam verb`() {
+            val message = ProtocolParsing.buildHandshakeMessage("Player1")
 
-            assertEquals("Iam Player1 /192.168.1.5", message)
+            assertEquals("Iam Player1", message)
         }
     }
 
     @Nested
-    @DisplayName("parseTxrxonReply()")
-    inner class ParseTxrxonReplyTests {
+    @DisplayName("parseRegisteredReply()")
+    inner class ParseRegisteredReplyTests {
 
         @Test
-        fun `parses a well-formed reply`() {
-            val result = ProtocolParsing.parseTxrxonReply("/127.0.0.1 TXRXON 9997 9996")
+        fun `succeeds on the bare REGISTERED token`() {
+            val result = ProtocolParsing.parseRegisteredReply("REGISTERED")
 
             assertTrue(result.isSuccess)
-            val ports = result.getOrThrow()
-            assertEquals(9997, ports.localListenPort)
-            assertEquals(9996, ports.serverCommandPort)
         }
 
         @Test
-        fun `fails when the verb is not TXRXON`() {
-            val result = ProtocolParsing.parseTxrxonReply("/127.0.0.1 NOPE 9997 9996")
-
-            assertTrue(result.isFailure)
-        }
-
-        @Test
-        fun `fails when there are too few tokens`() {
-            val result = ProtocolParsing.parseTxrxonReply("/127.0.0.1 TXRXON 9997")
-
-            assertTrue(result.isFailure)
-        }
-
-        @Test
-        fun `fails when a port is not numeric`() {
-            val result = ProtocolParsing.parseTxrxonReply("/127.0.0.1 TXRXON abc 9996")
+        fun `fails when the token is not REGISTERED`() {
+            val result = ProtocolParsing.parseRegisteredReply("NOPE")
 
             assertTrue(result.isFailure)
         }
 
         @Test
         fun `tolerates surrounding whitespace`() {
-            val result = ProtocolParsing.parseTxrxonReply("  /127.0.0.1 TXRXON 9997 9996  \n")
+            val result = ProtocolParsing.parseRegisteredReply("  REGISTERED  \n")
 
             assertTrue(result.isSuccess)
         }
@@ -91,10 +74,10 @@ class ProtocolParsingTest {
 
         @Test
         fun `only the first space separates verb from payload`() {
-            val (verb, payload) = ProtocolParsing.splitVerbAndPayload("SET_DEST 0 12.5 -4.0")
+            val (verb, payload) = ProtocolParsing.splitVerbAndPayload("COMMAND {\"type\": \"gametools.stop\"}")
 
-            assertEquals("SET_DEST", verb)
-            assertEquals("0 12.5 -4.0", payload)
+            assertEquals("COMMAND", verb)
+            assertEquals("{\"type\": \"gametools.stop\"}", payload)
         }
     }
 }

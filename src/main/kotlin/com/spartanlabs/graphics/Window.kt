@@ -1,6 +1,7 @@
 package com.spartanlabs.graphics
 
 import com.spartanlabs.gaming.gameobjects.DrawableSnapshot
+import com.spartanlabs.gaming.gameobjects.EntityId
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
 import com.spartanlabs.gaming.networking.MouseAction
 import com.spartanlabs.gaming.networking.MouseActionType
@@ -12,6 +13,7 @@ import com.spartanlabs.graphics.ui.dispatchKey
 import com.spartanlabs.graphics.ui.dispatchMouse
 import com.spartanlabs.networking.Camera
 import com.spartanlabs.networking.NdcConverter
+import com.spartanlabs.networking.byEntityId
 import com.spartanlabs.networking.drawableCore
 import org.lwjgl.glfw.Callbacks
 import org.lwjgl.glfw.GLFW.*
@@ -157,6 +159,12 @@ class Window(
     // can hit-test against exactly what the user is currently looking at.
     private var lastSnapshots: List<VisibleObjectSnapshot> = emptyList()
 
+    // Supplies the stable entity id of the currently selected unit (wired in
+    // Main to the game Viewport), so render() can draw a selection outline
+    // around it in the world. Defaults to "nothing selected". Only ever read
+    // from the main/GLFW thread (in render()), same as everything else here.
+    private var selectionSource: () -> Long? = { null }
+
     // Transient right-click markers: a textured quad dropped at a fixed world
     // position that fades from opaque to invisible over MARKER_FADE_SECONDS,
     // then is discarded. Purely client-side eye-candy - the server is never
@@ -235,6 +243,18 @@ class Window(
     fun currentScene(): String? = currentSceneName
 
     /**
+     * Wires up where the in-world selection highlight reads its target: [source]
+     * returns the stable [DrawableSnapshot.id] of the selected unit each frame,
+     * or null when nothing is selected. Main calls this with the game
+     * [com.spartanlabs.graphics.ui.Viewport]'s selection; [render] resolves the
+     * id against the current frame's snapshots and, if it is still present,
+     * draws an outline around that unit (see [drawSelectionOutline]).
+     */
+    fun onSelection(source: () -> Long?) {
+        selectionSource = source
+    }
+
+    /**
      * Drops a fading [MARKER_TEXTURE] quad at the world position currently
      * rendered under the given window pixel (top-left origin, as GLFW reports
      * the cursor). It is pinned to that world spot - panning/zooming the
@@ -254,15 +274,27 @@ class Window(
      * cursor) against the actors drawn in the most recent [render] call,
      * honouring their on-screen position, size, rotation and the camera
      * pan/zoom at that time.
-     * @return the index - into that frame's snapshot list - of the top-most
-     * actor under the point, or null if the point is over empty space
+     * @return the stable [DrawableSnapshot.id] (as its bare [EntityId.raw]) of
+     * the top-most actor under the point, or null if the point is over empty
+     * space - or over an actor the server sent without a stable id (a
+     * pre-GameTools-3.1 server: its ids are all [EntityId.UNASSIGNED], which
+     * cannot be tracked across frames), which is logged once per occurrence and
+     * treated as a miss
      */
-    fun pick(screenXPx: Double, screenYPx: Double): Int? =
-        Picking.pick(
+    fun pick(screenXPx: Double, screenYPx: Double): Long? {
+        val index = Picking.pick(
             screenXPx, screenYPx, width, height,
             Camera(zoomFactor, panOffsetX, panOffsetY),
             lastSnapshots
-        )
+        ) ?: return null
+
+        val id = lastSnapshots[index].id
+        if (id == EntityId.UNASSIGNED) {
+            log.debug("Picked an actor with no stable entity id - server needs GameTools 3.1+; treating as no selection")
+            return null
+        }
+        return id.raw
+    }
 
     /**
      * Clears the screen, draws every object in [snapshots] (and its
@@ -275,7 +307,7 @@ class Window(
      * does not use.
      */
     fun render(snapshots: List<DrawableSnapshot>) {
-        log.trace("Rendering {} object(s)", snapshots.size)
+        log.debug("Rendering {} object(s)", snapshots.size)
         applyEdgePanning()
         val cores = snapshots.map { it.drawableCore() }
         lastSnapshots = cores
@@ -285,6 +317,14 @@ class Window(
         val camera = Camera(zoomFactor, panOffsetX, panOffsetY)
         cores.forEach { core -> drawActor(core, camera) }
         drawClickMarkers(camera)
+
+        // Selection highlight, on top of the actors so it is never hidden by an
+        // overlapping unit. Resolved fresh each frame: if the selected id is
+        // gone from this frame's state - nothing selected, or the unit died or
+        // left the world - nothing is drawn.
+        selectionSource()
+            ?.let { id -> cores.byEntityId(id) }
+            ?.let { selected -> drawSelectionOutline(selected.drawableCore(), camera) }
 
         currentSceneName?.let { name -> stage[name] }?.let { scene ->
             uiRenderer.render(scene, width, height)
@@ -653,6 +693,48 @@ class Window(
         glBindVertexArray(0)
     }
 
+    /**
+     * Draws the four-edge [SelectionOutline] frame around [selected] with the
+     * given [camera] applied - the exact transform [drawActor] uses, so the
+     * outline stays locked to the unit through camera pan and zoom. A trimmed
+     * [drawActor]: the white fallback texture flat-tinted [SELECTION_COLOR],
+     * no rotation, no sub-objects, the same quad geometry per edge.
+     *
+     * A unit whose snapshot reports a non-positive width or height would give a
+     * collapsed frame, so it is skipped entirely.
+     */
+    private fun drawSelectionOutline(selected: VisibleObjectSnapshot, camera: Camera) {
+        val unitWidth = selected.dimensions.width
+        val unitHeight = selected.dimensions.height
+        if (unitWidth <= 0.0 || unitHeight <= 0.0) return
+
+        glUseProgram(shaderProgram)
+        glUniform1f(glGetUniformLocation(shaderProgram, "uAngleRadians"), 0f)
+        glUniform4f(
+            glGetUniformLocation(shaderProgram, "uColor"),
+            SELECTION_COLOR[0], SELECTION_COLOR[1], SELECTION_COLOR[2], SELECTION_COLOR[3]
+        )
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, textures.handleFor(null)) // null -> the 1x1 white fallback
+        glUniform1i(glGetUniformLocation(shaderProgram, "uTexture"), 0)
+        glBindVertexArray(vao)
+
+        for (edge in SelectionOutline.edges(
+            selected.gameObject.location.x, selected.gameObject.location.y,
+            unitWidth, unitHeight,
+            SELECTION_MARGIN_PX, SELECTION_THICKNESS_PX
+        )) {
+            val (offsetX, offsetY) = NdcConverter.offset(edge.cx, edge.cy, width, height, camera)
+            glUniform2f(glGetUniformLocation(shaderProgram, "uOffset"), offsetX, offsetY)
+
+            val (halfSizeX, halfSizeY) = NdcConverter.halfSize(edge.widthPx, edge.heightPx, width, height, camera)
+            glUniform2f(glGetUniformLocation(shaderProgram, "uHalfSize"), halfSizeX, halfSizeY)
+
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0L)
+        }
+        glBindVertexArray(0)
+    }
+
     private fun createQuadGeometry() {
         // A unit square using +/-1 corner directions. The vertex shader
         // scales this by uHalfSize (set per actor, per draw call) to reach
@@ -719,6 +801,15 @@ class Window(
 
         /** How long a right-click marker takes to fade from opaque to gone, in seconds. */
         const val MARKER_FADE_SECONDS = 1.0
+
+        /** Selection-outline tint, RGBA in 0..1 - a bright, opaque green. */
+        val SELECTION_COLOR = floatArrayOf(0.25f, 1.0f, 0.35f, 1.0f)
+
+        /** Gap between the selected unit's box and the inner edge of its outline, in world pixels. */
+        const val SELECTION_MARGIN_PX = 6.0
+
+        /** Thickness of each selection-outline edge, in world pixels (before camera zoom). */
+        const val SELECTION_THICKNESS_PX = 3.0
     }
 }
 

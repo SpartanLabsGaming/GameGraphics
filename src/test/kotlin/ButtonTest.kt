@@ -9,6 +9,7 @@ import com.spartanlabs.graphics.ui.ButtonState
 import com.spartanlabs.graphics.ui.KeyAction
 import com.spartanlabs.graphics.ui.KeyActionType
 import com.spartanlabs.graphics.ui.TextAlignment
+import com.spartanlabs.graphics.ui.lightened
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame

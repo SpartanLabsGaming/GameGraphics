@@ -1,6 +1,6 @@
 package com.spartanlabs.graphics
 
-import com.spartanlabs.graphics.ui.Color
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.graphics.ui.Element
 import com.spartanlabs.graphics.ui.PositionedElement
 import com.spartanlabs.graphics.ui.Scene

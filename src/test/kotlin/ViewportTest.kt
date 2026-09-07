@@ -9,27 +9,27 @@ import org.junit.jupiter.api.Test
 
 /** Records every call so a test can assert what the [Viewport] asked of the game. */
 class FakeGameView(
-    private val pickResult: Int? = null,
+    private val pickResult: Long? = null,
     /** What [attack] returns - true simulates the cursor being over an attackable target. */
     private val attackResult: Boolean = false
 ) : GameView {
     var pickedAt: Pair<Double, Double>? = null
-    var moved: Triple<Int, Double, Double>? = null
-    var attacked: Triple<Int, Double, Double>? = null
+    var moved: Triple<Long, Double, Double>? = null
+    var attacked: Triple<Long, Double, Double>? = null
     var markedAt: Pair<Double, Double>? = null
     var toggleCount = 0
 
-    override fun pickActor(xPx: Double, yPx: Double): Int? {
+    override fun pickActor(xPx: Double, yPx: Double): Long? {
         pickedAt = xPx to yPx
         return pickResult
     }
 
-    override fun moveActor(actorIndex: Int, xPx: Double, yPx: Double) {
-        moved = Triple(actorIndex, xPx, yPx)
+    override fun moveActor(entityId: Long, xPx: Double, yPx: Double) {
+        moved = Triple(entityId, xPx, yPx)
     }
 
-    override fun attack(attackerIndex: Int, xPx: Double, yPx: Double): Boolean {
-        attacked = Triple(attackerIndex, xPx, yPx)
+    override fun attack(attackerEntityId: Long, xPx: Double, yPx: Double): Boolean {
+        attacked = Triple(attackerEntityId, xPx, yPx)
         return attackResult
     }
 
@@ -52,13 +52,13 @@ class ViewportTest {
 
     @Test
     fun `left press hit-tests actors and stores the selection`() {
-        val game = FakeGameView(pickResult = 3)
+        val game = FakeGameView(pickResult = 3L)
         val view = newViewport(game)
 
         view.onMouseAction(press(button = 0, x = 42.0, y = 99.0))
 
         assertEquals(42.0 to 99.0, game.pickedAt)
-        assertEquals(3, view.selectedActor)
+        assertEquals(3L, view.selectedEntityId)
     }
 
     @Test
@@ -67,18 +67,18 @@ class ViewportTest {
 
         view.onMouseAction(press(button = 0))
 
-        assertNull(view.selectedActor)
+        assertNull(view.selectedEntityId)
     }
 
     @Test
     fun `right press moves the selected actor to the clicked pixel`() {
-        val game = FakeGameView(pickResult = 7)
+        val game = FakeGameView(pickResult = 7L)
         val view = newViewport(game)
-        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select actor 7
+        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select unit 7
 
         view.onMouseAction(press(button = 1, x = 800.0, y = 450.0))
 
-        assertEquals(Triple(7, 800.0, 450.0), game.moved)
+        assertEquals(Triple(7L, 800.0, 450.0), game.moved)
     }
 
     @Test
@@ -94,40 +94,40 @@ class ViewportTest {
 
     @Test
     fun `right press drops a marker at the clicked pixel`() {
-        val game = FakeGameView(pickResult = 7)
+        val game = FakeGameView(pickResult = 7L)
         val view = newViewport(game)
-        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select actor 7
+        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select unit 7
 
         view.onMouseAction(press(button = 1, x = 800.0, y = 450.0))
 
         assertEquals(800.0 to 450.0, game.markedAt)
-        assertEquals(Triple(7, 800.0, 450.0), game.moved)
+        assertEquals(Triple(7L, 800.0, 450.0), game.moved)
     }
 
     @Test
     fun `right press over an attackable target attacks it and does not move or mark`() {
-        val game = FakeGameView(pickResult = 7, attackResult = true)
+        val game = FakeGameView(pickResult = 7L, attackResult = true)
         val view = newViewport(game)
-        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select actor 7
+        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select unit 7
 
         view.onMouseAction(press(button = 1, x = 300.0, y = 120.0))
 
-        assertEquals(Triple(7, 300.0, 120.0), game.attacked)
+        assertEquals(Triple(7L, 300.0, 120.0), game.attacked)
         assertNull(game.moved)
         assertNull(game.markedAt)
     }
 
     @Test
     fun `right press falls back to marker and move when the target is not attackable`() {
-        val game = FakeGameView(pickResult = 7, attackResult = false)
+        val game = FakeGameView(pickResult = 7L, attackResult = false)
         val view = newViewport(game)
-        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select actor 7
+        view.onMouseAction(press(button = 0, x = 5.0, y = 5.0)) // select unit 7
 
         view.onMouseAction(press(button = 1, x = 300.0, y = 120.0))
 
-        assertEquals(Triple(7, 300.0, 120.0), game.attacked)
+        assertEquals(Triple(7L, 300.0, 120.0), game.attacked)
         assertEquals(300.0 to 120.0, game.markedAt)
-        assertEquals(Triple(7, 300.0, 120.0), game.moved)
+        assertEquals(Triple(7L, 300.0, 120.0), game.moved)
     }
 
     @Test
@@ -154,7 +154,7 @@ class ViewportTest {
 
     @Test
     fun `moves and releases do nothing`() {
-        val game = FakeGameView(pickResult = 1)
+        val game = FakeGameView(pickResult = 1L)
         val view = newViewport(game)
 
         view.onMouseAction(MouseAction(MouseActionType.MOVE, -1, 3.0, 4.0))

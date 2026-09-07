@@ -2,6 +2,7 @@ package com.spartanlabs.graphics.ui
 
 import com.spartanlabs.gaming.networking.MouseAction
 import com.spartanlabs.gaming.networking.MouseActionType
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.geometry.Square
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory

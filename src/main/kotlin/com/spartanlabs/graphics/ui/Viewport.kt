@@ -2,6 +2,7 @@ package com.spartanlabs.graphics.ui
 
 import com.spartanlabs.gaming.networking.MouseAction
 import com.spartanlabs.gaming.networking.MouseActionType
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.geometry.Square
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -36,8 +37,8 @@ class Viewport(
     override val color: Color = Color.TRANSPARENT
 ) : Element(position, color) {
 
-    /** Index of the actor a left-click selected, or null. Survives scene swaps. */
-    var selectedActor: Int? = null
+    /** Stable entity id of the actor a left-click selected, or null. Survives scene swaps. */
+    var selectedEntityId: Long? = null
         private set
 
     override fun onMouseAction(action: MouseAction) {
@@ -51,9 +52,9 @@ class Viewport(
     }
 
     private fun selectActorUnder(action: MouseAction) {
-        selectedActor = game.pickActor(action.x, action.y)
-        selectedActor
-            ?.let { log.info("Selected actor {}", it) }
+        selectedEntityId = game.pickActor(action.x, action.y)
+        selectedEntityId
+            ?.let { log.info("Selected unit {}", it) }
             ?: log.debug("Click at ({}, {}) selected no actor", action.x, action.y)
     }
 
@@ -63,9 +64,9 @@ class Viewport(
      * selected, only the marker is dropped.
      */
     private fun commandSelectedActor(action: MouseAction) {
-        val actor = selectedActor
-        if (actor != null && game.attack(actor, action.x, action.y)) {
-            log.info("Actor {} ordered to attack the target at ({}, {})", actor, action.x, action.y)
+        val unit = selectedEntityId
+        if (unit != null && game.attack(unit, action.x, action.y)) {
+            log.info("Unit {} ordered to attack the target at ({}, {})", unit, action.x, action.y)
             return
         }
         game.markLocation(action.x, action.y)
@@ -73,12 +74,12 @@ class Viewport(
     }
 
     private fun moveSelectedActorTo(action: MouseAction) {
-        val actor = selectedActor
-        if (actor == null) {
+        val unit = selectedEntityId
+        if (unit == null) {
             log.debug("Right click ignored - left-click an actor to select it first")
             return
         }
-        game.moveActor(actor, action.x, action.y)
+        game.moveActor(unit, action.x, action.y)
     }
 
     private companion object {

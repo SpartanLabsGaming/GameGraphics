@@ -1,6 +1,7 @@
 package com.spartanlabs.graphics.ui
 
 import com.spartanlabs.gaming.gameobjects.VisibleObjectSnapshot
+import com.spartanlabs.generaltools.Color
 import com.spartanlabs.geometry.Square
 
 /**

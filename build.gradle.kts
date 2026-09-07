@@ -7,7 +7,7 @@ plugins {
 
 // Pins both compileJava and compileKotlin to the same JDK, so they always
 // agree on JVM target (fixes "Inconsistent JVM-target compatibility").
-// 23, not the 21 LTS default, because GameTools (1.3.0) is compiled
+// 23, not the 21 LTS default, because GameTools (gametools 5.0.0) is compiled
 // targeting JVM 23 and requires a runtime at least that new.
 // Falls back to auto-provisioning via the Gradle toolchain resolver if this
 // exact version isn't already installed locally.
@@ -32,7 +32,10 @@ val lwjglNatives = when {
 }
 
 dependencies {
-    api("io.github.spartanlaboratories:GameTools:1.8.0")
+    // GameTools 5.0.0 split into gametools-core (object model, stats, events) and
+    // gametools-net (GameServer, MouseAction, the ClientCommand protocol); this
+    // umbrella artifact re-exports both.
+    api("io.github.spartanlabsgaming:gametools:5.0.0")
 
     implementation(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
 

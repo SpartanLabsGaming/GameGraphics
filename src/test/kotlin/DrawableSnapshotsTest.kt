@@ -28,11 +28,11 @@ class DrawableSnapshotsTest {
             .copy(subObjects = subObjects)
 
     private fun actor(texture: String) =
-        ActorSnapshot(visibleObject(texture), speed = 5.0, destination = PointSnapshot(9.0, 9.0))
+        ActorSnapshot(visibleObject = visibleObject(texture), speed = 5.0, destination = PointSnapshot(9.0, 9.0))
 
     private fun alive(texture: String) =
         AliveSnapshot(
-            actor(texture),
+            actor = actor(texture),
             health = CombinedStatSnapshot(50.0, 100.0),
             faction = "red",
             ownerName = "Player1",
