@@ -2,7 +2,7 @@
 
 **Status:** proposed. A few questions are still open (see [Open questions](#open-questions)); each PR below lists the ones that block it.
 **Spans:** `SpartanLaboratories/SpartanGraphics` (new), `SpartanLaboratories/SpartanUI` (new),
-`SpartanLabsGaming/GameGraphics` (this repo, becomes the game client only; to be renamed, O19)
+`SpartanLabsGaming/GameGraphics` (this repo, becomes the game client only; to be renamed `MyGameClient`, D34)
 **Related:**
 - [SpartanLaboratories/GeneralTools#7](https://github.com/SpartanLaboratories/GeneralTools/issues/7): make GeneralTools multiplatform
 - [SpartanLabsGaming/MyGameTools#132](https://github.com/SpartanLabsGaming/MyGameTools/issues/132): a GameTools client, counterpart to `GameServer`
@@ -50,7 +50,7 @@ Breaking the current game while this happens is acceptable (decision 18).
 | D6 | **Element behaviour:** written once in ui-core. Platforms implement only a small set of services. |
 | D7 | **Elements:** a small set of basic elements that custom elements are built from. The common elements ship built from the basic ones. |
 | D8 | **Input:** raw input is translated into abstract input events. The UI turns those into triggers (`onTrigger`, not `onClick`). Where each layer lives is D23. |
-| D9 | **Callbacks:** any number per event. Each one is told which element fired and what triggered it. A listener interface covers core behaviour and lambdas cover extras (exact split is O4). |
+| D9 | **Callbacks:** any number per event. Each one is told which element fired and what triggered it. A listener interface covers core behaviour and lambdas cover extras (split is D33). |
 | D10 | **Event handling:** the front-most element takes a pointer event by default, and an element can opt in to let it through. Every callback on an event always runs; none can stop the others. Vetoing is a single guard condition on the element, checked before triggering. |
 | D11 | **Sizing:** positions are fractions of the parent, and sizes can be locked to an aspect ratio. Fixed-pixel sizes come later, if a user needs them. Clipping and scrolling are opt-in. Children can be added and removed at runtime. Layout containers come later. |
 | D12 | **GameTools snapshots:** graphics has its own drawing model. An adapter maps GameTools snapshots onto it. |
@@ -70,7 +70,12 @@ Breaking the current game while this happens is acceptable (decision 18).
 | D26 | **Adapters:** the GameTools snapshot adapter and the GeneralTools adapters live in the game client, not in any library. They're removed once GeneralTools#7 lands. |
 | D27 | **Element behaviour:** adding a callback returns a handle that removes it. Each element chooses its aspect-lock rule; the default is fit inside and centre. The element tree is changed only on the render thread. |
 | D28 | **Multiplatform house rules:** <ul><li>Logging uses kotlin-logging, which logs through slf4j on the JVM.</li><li>Shared tests use `kotlin.test` with hand-written fakes; MockK is still allowed in JVM-only tests.</li><li>Text v1 ports the STBEasyFont bitmap font.</li><li>Libraries target JVM 21.</li></ul> |
-| D29 | **Confirmed:** <ul><li>Assets keep names, and loading goes through `AssetSource` (D17).</li><li>A GameTools client issue is filed ([MyGameTools#132](https://github.com/SpartanLabsGaming/MyGameTools/issues/132)); `NetworkClient` stays in the game client until it ships.</li><li>This repo gets renamed (the new name is O19).</li></ul> |
+| D29 | **Confirmed:** <ul><li>Assets keep names, and loading goes through `AssetSource` (D17).</li><li>A GameTools client issue is filed ([MyGameTools#132](https://github.com/SpartanLabsGaming/MyGameTools/issues/132)); `NetworkClient` stays in the game client until it ships.</li><li>This repo gets renamed (to `MyGameClient`, D34).</li></ul> |
+| D30 | **Desktop scope:** only Windows is officially supported. The desktop module still handles the macOS and Linux considerations (see [macOS and Linux considerations](#macos-and-linux-considerations)), and CI compiles on all three. |
+| D31 | **Shapes and elements:** the closed set of three shapes (rectangle, text, outlined rectangle) and the basic and built-in elements listed under ui-core are confirmed. |
+| D32 | **Input details:** <ul><li>Abstract key ids and pointer information (position, buttons, scroll) are the library's own, in graphics-core.</li><li>Binding keys to UI elements happens in ui-core; the mechanism is O3.</li><li>Hover stays as a UI concept that touch platforms never fire.</li><li>Focus and gamepad navigation come later.</li></ul> |
+| D33 | **Listener vs. lambdas:** option (c). People building an element implement its listener, which defines how the element behaves; people using an element attach lambdas. |
+| D34 | **Repo name:** this repo becomes `MyGameClient`, pairing with `MyGameServer` and `MyGameTools`. You rename it in GitHub settings; old URLs redirect. |
 
 ## Target architecture
 
@@ -113,7 +118,7 @@ Neither library depends on GameTools, GeneralTools or WebTools. The game client 
   - The **world layer** is drawn through the camera.
   - The **screen layer** uses window pixels and holds the UI.
 
-  The proposed set (O2) is closed: users build anything from these, but can't add a fourth.
+  The set (D31) is closed: users build anything from these, but can't add a fourth.
   - **Rectangle:** a solid colour, or a texture tinted by that colour, with rotation and alpha. Today's actors, panels, bar fills, portraits and click markers are all this.
   - **Text:** a string with colour and alignment, in a fixed-size bitmap font in v1.
   - **Outlined rectangle:** a border of a given thickness. It covers the selection outline, UI borders and focus rings.
@@ -138,11 +143,15 @@ Neither library depends on GameTools, GeneralTools or WebTools. The game client 
 - **Textures and text:** `TextureCache` and `Shaders` move here as-is. Text uses STBEasyFont for v1 (D28).
 - **Assets:** an `AssetSource` that loads from the classpath.
 - **Frames and input:** a desktop frame loop on `glfwGetTime`, and GLFW input translated into the abstract input events.
+- **Cross-platform considerations (D30):**
+  - Window size (for input) and framebuffer size (for drawing) are kept separate.
+  - GLFW's windowed full-screen mode replaces moving a borderless window onto the monitor.
+  - On macOS the app starts on the first thread.
 - **LWJGL native libraries:** the library declares only the LWJGL Java APIs. The application adds the natives for its OS. Today the build picks natives from the build machine's OS, which is right for an app but wrong for a library.
 
 ### ui-core (KMP)
 
-- **Basic elements (D7, D13):** each adds a position in its parent, hit-testing and callbacks to a shape. The set is closed; custom elements are built from it (O2).
+- **Basic elements (D7, D13):** each adds a position in its parent, hit-testing and callbacks to a shape. The set is closed; custom elements are built from it (D31).
   - `Box` is a rectangle with a colour.
   - `Image` is a rectangle with a texture.
   - `Text` is a text shape.
@@ -159,7 +168,8 @@ Neither library depends on GameTools, GeneralTools or WebTools. The game client 
   - Keys go to every element, as today.
   - Hover and triggers work as in D8. The guard condition can veto a trigger.
   - A generic sink for unhandled input replaces today's hard-coded `Viewport` special case. The game's viewport becomes an ordinary user of that sink.
-- **Callbacks (D9):** any number per event, each told the element and the trigger source. The listener-vs-lambda split is O4. Adding a callback returns a handle that removes it (D27).
+- **Callbacks (D9):** any number per event, each told the element and the trigger source. Following D33, people building an element implement its listener, and people using it attach lambdas. Adding a callback returns a handle that removes it (D27).
+- **Keyboard shortcuts (D32):** keys are bound to elements at this level; the mechanism is O3.
 - **Scenes:** `Scene` and `Stage` become real classes instead of typealiases for `ArrayList` and `HashMap`.
 - **No GameTools types.** `Portrait`'s snapshot binding moves to the game client.
 
@@ -228,7 +238,7 @@ Each repo:
 - **KMP targets:** library modules start with `jvm()` plus one non-JVM target (`js` or `wasmJs`), with no web backend yet. The extra target makes any JVM-only API in common code fail to compile. Android is added in the Android phase.
 - **JVM bytecode:** libraries target 21 (D28). The game client stays on 23 because GameTools requires it.
 - **Publishing:** copies GeneralTools' setup. It uses the `com.vanniktech.maven.publish` plugin with Central Portal and signing, and the maintainer releases by hand; there's no publish workflow.
-- **CI:** a GitHub Actions build and test job. A `windows-latest` job compiles the desktop modules if desktop support is Windows-only (O1).
+- **CI:** GitHub Actions. A `windows-latest` job runs the full build and tests; `macos-latest` and `ubuntu-latest` jobs compile only (D30).
 - **Coding rules:** `.aiassistant/rules` is copied into each new repo. The logging and testing rules are adjusted for multiplatform as in D28.
 
 The game client's `settings.gradle.kts` includes `../SpartanGraphics` and `../SpartanUI` with `includeBuild` when those checkouts exist. Otherwise it falls back to published versions (D20).
@@ -244,7 +254,8 @@ Rule for every PR: it compiles and its tests pass. Between Phase 3 PRs, game fea
 | **P0** (this repo) | This plan | — |
 | Issue | [GeneralTools#7](https://github.com/SpartanLaboratories/GeneralTools/issues/7): make GeneralTools multiplatform (filed) | — |
 | Issue | [MyGameTools#132](https://github.com/SpartanLabsGaming/MyGameTools/issues/132): a GameTools client, counterpart to `GameServer` (filed) | — |
-| **You** | Create `SpartanLaboratories/SpartanGraphics` and `SpartanLaboratories/SpartanUI` and attach them to a session (this session can't create repos in that org) | — |
+| **You** | Create `SpartanLaboratories/SpartanGraphics` and `SpartanLaboratories/SpartanUI` (done) | — |
+| **You** | Rename this repo to `MyGameClient` in GitHub settings, at any time (D34) | — |
 
 ### Phase 1: SpartanGraphics
 
@@ -252,9 +263,9 @@ Rule for every PR: it compiles and its tests pass. Between Phase 3 PRs, game fea
 |---|---|---|
 | **G1** | Skeleton: wrapper, catalog, `build-logic`, empty `graphics-core` (KMP) and `graphics-desktop` (JVM), CI, publishing config, coding rules | — |
 | **G2** | Basic types (contracts + default implementations) and `Camera` (world/screen conversion, zoom, pan, visible region); `CameraTest` ported from `NdcConverterTest` | — |
-| **G3** | Shapes, world and screen layers, culling, picking, outline geometry; `PickingTest` and `SelectionOutlineTest` ported | O2 |
+| **G3** | Shapes, world and screen layers, culling, picking, outline geometry; `PickingTest` and `SelectionOutlineTest` ported | — |
 | **G4** | Platform contracts: surface, renderer, textures, text measurement, frames and clock, abstract input; new `assets-core` module with `AssetSource` | — |
-| **G5** | `graphics-desktop`: GLFW window, single GL 3.3 renderer, textures, STBEasyFont text, classpath assets, frame loop, GLFW input. Can't be unit-tested without a GPU; verified through C1. | O1 |
+| **G5** | `graphics-desktop`: GLFW window, single GL 3.3 renderer, textures, STBEasyFont text, classpath assets, frame loop, GLFW input. Can't be unit-tested without a GPU; verified through C1. | — |
 | **G6** | `audio-core` + `audio-desktop`, loading through `assets-core` | G4 |
 | **G7** | Release `0.1.0` (manual, by you) | G1–G6 |
 
@@ -263,9 +274,9 @@ Rule for every PR: it compiles and its tests pass. Between Phase 3 PRs, game fea
 | PR | Content | Blocked by |
 |---|---|---|
 | **U1** | Skeleton, same conventions, `ui-core` with `api(graphics-core)` through the composite build | G1 |
-| **U2** | Element tree: basic elements on shapes, `Group` with runtime add/remove and opt-in clipping, fractional positioning, aspect lock, conversion to shapes; layout tests from `UiTest` ported | O2 |
-| **U3** | Dispatch and callbacks: pointer and key routing, opt-in pass-through, hover, triggers, guard veto, multiple callbacks with context, the unhandled-input sink; dispatch tests ported | O3 |
-| **U4** | Built-in elements: `Label`, `Panel`, `Button`, `StatBar`, `Image`; `ButtonTest`, `StatBarTest`, `PortraitTest` ported | O4 |
+| **U2** | Element tree: basic elements on shapes, `Group` with runtime add/remove and opt-in clipping, fractional positioning, aspect lock, conversion to shapes; layout tests from `UiTest` ported | — |
+| **U3** | Dispatch and callbacks: pointer and key routing, opt-in pass-through, hover, triggers, guard veto, multiple callbacks with context, the unhandled-input sink, key bindings; dispatch tests ported | O3 |
+| **U4** | Built-in elements: `Label`, `Panel`, `Button`, `StatBar`, `Image`; `ButtonTest`, `StatBarTest`, `PortraitTest` ported | — |
 | **U5** | Opt-in scrolling for `Group` | U2 |
 | **U6** | Release `0.1.0` | U1–U5, G7 |
 
@@ -284,17 +295,46 @@ The game client isn't fully playable again until C2–C3. Its old feature set (s
 
 ## Open questions
 
-O5–O18 are resolved; see D22–D29.
+All questions except O3 are resolved; see D22–D34.
 
 | # | Question | My lean | Blocks |
 |---|---|---|---|
-| O1 | **Desktop scope.** Support Windows, macOS and Linux, or officially only Windows? See [Cost of macOS and Linux](#cost-of-macos-and-linux) below. | Write and CI-compile for all three; officially support Windows until someone tests the others | G1 CI, G5 |
-| O2 | **Shape set and basic elements.** Is the closed set of three shapes right (rectangle, text, outlined rectangle), along with the basic and built-in elements listed under ui-core? | Yes | G3, U2 |
-| O3 | **Input details.** <ul><li>Library key ids (`Key.A`) and pointer buttons (Primary, Secondary, Middle) in graphics-core?</li><li>Keyboard shortcuts on `Button`, or in an app-owned binding table?</li><li>Keep hover as a UI concept that touch never fires?</li><li>Focus or gamepad navigation in v1, later, or never?</li></ul> | Library ids; shortcut on `Button`; keep hover; focus later | G4, U3 |
-| O4 | **`ButtonListener` vs. lambdas.** <ul><li>(a) The listener is internal; everyone attaches lambdas.</li><li>(b) Both are public to element users: one listener for an element's main job, plus extra lambdas.</li><li>(c) The listener is for people *building* elements, defining how the element behaves; people *using* elements attach lambdas.</li></ul> | (c) | U4 |
-| O19 | **New name for this repo** once it holds only the game client. You rename it in GitHub settings; old URLs redirect. | `MyGameClient`, mirroring `MyGameServer` / `MyGameTools` | C5 |
+| O3 | **How keys bind to UI elements (D32):** declared on the element, or in a binding table? See below. | Binding table | U3 |
 
-### Cost of macOS and Linux
+### O3: shortcut on the element, or a binding table
+
+**On the element:** `Button("BEEP", shortcut = Key.B)`. Each element checks every key press against its own shortcut, as `Button` does today.
+
+- Pros:
+  - The binding sits where the element is built, and the element can show its own hint ("BEEP (B)") from the same value.
+  - Scoping is automatic. Only elements in the shown scene see keys, and removing an element removes its shortcut.
+  - It's the least code, and a direct port of today's `Button` and `ButtonTest`.
+- Costs:
+  - Shortcuts are scattered through the element tree. Rebinding them in a settings screen, saving a keymap, or listing them in a help overlay all mean walking the tree.
+  - Two elements bound to the same key both fire, silently.
+  - Every element type that wants a shortcut needs its own shortcut property.
+  - Shortcuts that aren't tied to an element, like the game's `M` / `A` / `S` orders, still need a second mechanism.
+
+**Binding table:** `scene.keys.bind(Key.B, beepButton)` returns a removable handle (D27). Pressing and releasing B goes through the button's normal trigger path, so the guard still applies and a held key still shows the pressed look. Each `Scene` has a table; a `Stage`-wide table holds keys that work in every scene.
+
+- Pros:
+  - Every shortcut is in one list, which rebinding, saved keymaps and help overlays all read from.
+  - Conflicts can be caught: binding a key twice in a scene is refused or reported.
+  - Elements know nothing about keys, which fits D33: elements define behaviour, and the app wires input.
+  - The same table can hold plain actions as well as elements, so the game's `M` / `A` / `S` (and a future camera-follow key) use the same mechanism as buttons.
+  - The menu and game scenes get different keymaps for free.
+- Costs:
+  - The binding is declared away from the element. A button's label has to look its key up in the table, or be written by hand as today.
+  - It needs lifecycle rules. When an element is removed at runtime its binding must go too, either through the handle or by the table skipping detached and hidden elements. Those rules need defining and testing.
+  - It's more API: a key-bindings type, scene vs. stage scoping and precedence, and forwarding press and release.
+
+**Recommendation: binding table.**
+- RTS players expect rebindable hotkeys.
+- This game already has more shortcuts that aren't buttons (`M`, `A`, `S`) than button shortcuts (`B`), and one table serves both.
+- Its costs are one-time API work, whereas the element approach's costs grow with every element and every key.
+- If declaring keys away from the element gets annoying, a later `Button(shortcut = …)` shorthand that registers into the table can be added without breaking anything.
+
+### macOS and Linux considerations
 
 LWJGL covers all three (x64 and arm64, including Apple Silicon). The Kotlin code is the same everywhere; only the native jars differ, and the app picks those. Beyond that:
 
@@ -302,7 +342,7 @@ LWJGL covers all three (x64 and arm64, including Apple Silicon). The Kotlin code
 - **macOS, main thread.** GLFW must run on the first thread (`-XstartOnFirstThread`). The app's launcher already handles this.
 - **macOS, OpenGL.** Apple has deprecated OpenGL and frozen it at 4.1. Our 3.3 core works today, but a future macOS could need a Metal (or MoltenVK) backend.
 - **Linux, Wayland.** Apps can't position their own windows there, so the current trick of moving a borderless window onto the primary monitor becomes GLFW's windowed full-screen mode.
-- **Testing.** CI can compile on Windows, macOS and Linux runners at no extra cost, but none of them can open a window. The real cost is someone running each release on a Mac and a Linux machine.
+- **Testing.** CI compiles on Windows, macOS and Linux runners at no extra cost, but none of them can open a window. Because only Windows is officially supported (D30), releases are only run by hand on Windows; macOS and Linux are "should work, untested."
 
 ## Risks
 
